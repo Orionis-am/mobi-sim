@@ -216,6 +216,7 @@ __marimo__/
 
 #AI
 *CLAUDE.md
+*.pdf
 
 # Streamlit
 .streamlit/secrets.toml
