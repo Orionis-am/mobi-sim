@@ -251,11 +251,44 @@ L'ordre Opus > GSM > AAC du rapport est bien préservé dans les deux groupes ma
 simulation. 47 tests au total (8 nouveaux pour ce fichier), tous verts ; couverture `module_a` :
 **95 %**, `mushra_sim.py` à 100 %.
 
+### `visualize.py`
+
+**Choix** : uniquement des fonctions qui construisent et **retournent** une `Figure` matplotlib à
+partir de données déjà calculées (par `metrics.py`, `whisper_eval.py`, `mushra_sim.py`) — aucun
+I/O, aucun `plt.show()`. Charge à l'appelant (script d'orchestration à venir, ou un futur endpoint
+`module_e`) de l'afficher, l'embarquer, ou l'enregistrer. Ce découplage est ce qui rend le module
+testable en headless (backend `Agg` dans les tests) sans jamais faire apparaître de fenêtre.
+
+- `plot_mushra_comparison(summary)` — barres groupées (par codec × groupe English/Native), barres
+  d'erreur = IC 95% bootstrap de `mushra_sim.summarize_mushra`.
+- `plot_metric_bar(values, ylabel, title)` — un histogramme générique réutilisé pour PESQ et pour
+  WER plutôt que deux fonctions quasi identiques.
+- `mushra_grand_mean(summary)` — réduit les deux groupes MUSHRA à une seule moyenne par codec, pour
+  pouvoir aligner MUSHRA avec PESQ/WER (scalaires) dans une même matrice de corrélation.
+- `build_correlation_table(pesq_by_codec, wer_by_codec, mushra_summary)` — assemble
+  `{codec: {pesq, wer, mushra}}`.
+- `plot_correlation_matrix(metrics_by_label)` — heatmap de corrélation de Pearson
+  (`np.corrcoef`), annotée. Volontairement générique sur la clé (« label ») : avec seulement 3
+  codecs aujourd'hui, la matrice a 3 points par variable — statistiquement faible (df=1), c'est
+  justement l'un des points à discuter dans le rapport final (§Q1 du sujet) ; mais la même fonction
+  pourra plus tard prendre en entrée de nombreuses évaluations du chromosome codec du Module F
+  (Pb1), avec beaucoup plus de points, sans rien changer au code.
+- `save_figure(fig, filename, output_dir="results")` — écrit un PNG dans `results/` (répertoire
+  gitignoré, cf. `.gitignore` : sortie régénérable, pas versionnée).
+
+**Point de robustesse testé** : si une métrique est constante entre les codecs (variance nulle,
+ex. un WER identique partout), `np.corrcoef` renvoie `NaN` pour les corrélations impliquant cette
+métrique — géré en affichant `"n/a"` dans la case plutôt que de planter ou d'afficher `nan`.
+
+**Résultats de test** : 55 tests au total (8 nouveaux pour ce fichier), tous verts ; couverture
+`module_a` : **96 %**, `visualize.py` à 100%. Un avertissement matplotlib
+(`set_xticklabels() should only be used with...`) est apparu pendant le développement dans
+`plot_metric_bar` (labels posés sans `set_xticks()` préalable) — corrigé en fixant les ticks
+numériques avant de poser les labels, comme le fait déjà `plot_mushra_comparison`.
+
 ---
 
 ## En attente / pas encore implémenté
 
-- `module_a/visualize.py` — graphiques MUSHRA/PESQ/WER + matrice de corrélation PESQ×MUSHRA×WER.
 - `module_a/fitness.py` — contrat `codec_fitness(chromosome)` pour le Module F.
-- `module_a/test_module_a.py` — tests unitaires (objectif ≥75% de couverture, cf. CLAUDE.md).
 - Modules B–F, non commencés.
