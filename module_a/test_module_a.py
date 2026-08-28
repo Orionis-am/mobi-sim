@@ -17,7 +17,7 @@ import pytest
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 
-from module_a import codecs, metrics, mushra_sim, synth_audio, visualize, whisper_eval
+from module_a import codecs, fitness, metrics, mushra_sim, synth_audio, visualize, whisper_eval
 
 SR = 8_000
 
@@ -379,6 +379,149 @@ class TestSaveFigure:
         assert out_path == tmp_path / "pesq.png"
         assert out_path.exists()
         assert out_path.stat().st_size > 0
+
+
+# --- fitness ---------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_fitness_reference_cache():
+    fitness._reference_cache.clear()
+    yield
+    fitness._reference_cache.clear()
+
+
+class TestDecodeChromosome:
+    def test_snaps_to_nearest_discrete_choices(self):
+        config = fitness.decode_chromosome([9.0, 22.0, 0.5, 0])
+        assert config.bitrate_kbps == 8.0
+        assert config.frame_size_ms == 20.0
+
+    @pytest.mark.parametrize("codec_raw,expected", [(0, "aac"), (1, "gsm"), (2, "opus"), (5, "opus"), (-1, "opus")])
+    def test_codec_index_wraps_via_modulo(self, codec_raw, expected):
+        config = fitness.decode_chromosome([16, 20, 0.5, codec_raw])
+        assert config.codec == expected
+
+    def test_plc_level_is_clipped_to_unit_interval(self):
+        assert fitness.decode_chromosome([16, 20, 1.5, 0]).plc_level == 1.0
+        assert fitness.decode_chromosome([16, 20, -0.5, 0]).plc_level == 0.0
+
+    def test_wrong_length_chromosome_raises(self):
+        with pytest.raises(ValueError):
+            fitness.decode_chromosome([16, 20, 0.5])
+
+
+class TestBitrateToTargetSnr:
+    def test_extremes_match_configured_bounds(self):
+        assert fitness._bitrate_to_target_snr_db(8) == pytest.approx(fitness._SNR_AT_MIN_BITRATE_DB)
+        assert fitness._bitrate_to_target_snr_db(32) == pytest.approx(fitness._SNR_AT_MAX_BITRATE_DB)
+
+    def test_monotonically_increasing(self):
+        snrs = [fitness._bitrate_to_target_snr_db(b) for b in fitness.BITRATE_CHOICES_KBPS]
+        assert snrs == sorted(snrs)
+
+    def test_out_of_range_bitrate_is_clipped(self):
+        assert fitness._bitrate_to_target_snr_db(0) == pytest.approx(fitness._SNR_AT_MIN_BITRATE_DB)
+        assert fitness._bitrate_to_target_snr_db(1000) == pytest.approx(fitness._SNR_AT_MAX_BITRATE_DB)
+
+
+class TestApplyPacketLoss:
+    def test_zero_loss_rate_is_identity(self, reference_signal):
+        rng = np.random.default_rng(0)
+        out = fitness._apply_packet_loss(reference_signal, SR, 20, 0.5, 0.0, rng)
+        np.testing.assert_array_equal(out, reference_signal)
+
+    def test_full_loss_rate_yields_silence(self, reference_signal):
+        # Every frame reports lost, including the first, so there is never a
+        # real "last good frame" to conceal with — total silence either way.
+        rng = np.random.default_rng(0)
+        out = fitness._apply_packet_loss(reference_signal, SR, 20, plc_level=1.0, loss_rate=1.0, rng=rng)
+        np.testing.assert_array_equal(out, np.zeros_like(reference_signal))
+
+    def test_lost_frames_match_expected_rng_draws(self):
+        sr, frame_size_ms, plc_level, loss_rate = 1000, 10, 0.5, 0.5
+        frame_len = 10
+        signal = np.arange(1, 31, dtype=np.float32)  # 3 frames of 10 distinct samples
+
+        rng_for_expectation = np.random.default_rng(7)
+        expected_draws = [rng_for_expectation.random() for _ in range(3)]
+
+        out = fitness._apply_packet_loss(signal, sr, frame_size_ms, plc_level, loss_rate, np.random.default_rng(7))
+
+        last_good = np.zeros(frame_len, dtype=np.float32)
+        for i, draw in enumerate(expected_draws):
+            start = i * frame_len
+            frame = signal[start : start + frame_len]
+            if draw < loss_rate:
+                np.testing.assert_array_equal(out[start : start + frame_len], last_good * plc_level)
+            else:
+                np.testing.assert_array_equal(out[start : start + frame_len], frame)
+                last_good = frame
+
+
+class TestEstimateWerProxy:
+    def test_boundary_values(self):
+        assert fitness.estimate_wer_proxy(metrics.PESQ_MAX) == pytest.approx(0.0)
+        assert fitness.estimate_wer_proxy(metrics.PESQ_MIN) == pytest.approx(1.0)
+
+    def test_monotonically_decreasing(self):
+        low = fitness.estimate_wer_proxy(2.0)
+        high = fitness.estimate_wer_proxy(4.0)
+        assert high < low
+
+    def test_out_of_range_pesq_is_clipped(self):
+        assert fitness.estimate_wer_proxy(0.0) == pytest.approx(1.0)
+        assert fitness.estimate_wer_proxy(10.0) == pytest.approx(0.0)
+
+
+class TestCodecFitnessComponents:
+    def test_returns_expected_keys(self, reference_signal):
+        result = fitness.codec_fitness_components([16, 20, 0.3, 1], reference_signal, sr=SR, seed=0)
+        assert set(result) == {
+            "codec", "bitrate_kbps", "frame_size_ms", "plc_level", "pesq_nb", "wer", "constraint_violation", "fitness",
+        }
+        assert np.isfinite(result["fitness"])
+
+    def test_seed_reproducibility(self, reference_signal):
+        a = fitness.codec_fitness_components([16, 20, 0.3, 1], reference_signal, sr=SR, seed=0)
+        b = fitness.codec_fitness_components([16, 20, 0.3, 1], reference_signal, sr=SR, seed=0)
+        assert a == b
+
+    def test_bitrate_cap_penalizes_fitness(self, reference_signal):
+        uncapped = fitness.codec_fitness_components([32, 20, 0.3, 0], reference_signal, sr=SR, seed=0)
+        capped = fitness.codec_fitness_components(
+            [32, 20, 0.3, 0], reference_signal, sr=SR, seed=0, bitrate_cap_kbps=16.0, constraint_penalty_weight=2.0
+        )
+        assert capped["constraint_violation"] == pytest.approx(16.0)
+        assert capped["fitness"] == pytest.approx(uncapped["fitness"] - 2.0 * 16.0)
+
+    def test_wer_fn_override_is_used_verbatim(self, reference_signal):
+        result = fitness.codec_fitness_components(
+            [16, 20, 0.3, 1], reference_signal, sr=SR, seed=0, wer_fn=lambda signal, sr: 0.37
+        )
+        assert result["wer"] == 0.37
+
+
+class TestCodecFitness:
+    def test_matches_components_fitness_value(self, monkeypatch, reference_signal):
+        monkeypatch.setattr(synth_audio, "generate_reference_signal", lambda target_sr: (reference_signal, target_sr))
+        value = fitness.codec_fitness([16, 20, 0.3, 1], sr=SR, seed=0)
+        expected = fitness.codec_fitness_components([16, 20, 0.3, 1], reference_signal, sr=SR, seed=0)["fitness"]
+        assert value == pytest.approx(expected)
+
+    def test_reference_signal_is_generated_once_and_cached(self, monkeypatch, reference_signal):
+        calls = []
+
+        def _fake_generate(target_sr):
+            calls.append(target_sr)
+            return reference_signal, target_sr
+
+        monkeypatch.setattr(synth_audio, "generate_reference_signal", _fake_generate)
+
+        fitness.codec_fitness([16, 20, 0.3, 1], sr=SR, seed=0)
+        fitness.codec_fitness([8, 10, 0.9, 2], sr=SR, seed=1)
+
+        assert calls == [SR]
 
 
 # --- whisper_eval ------------------------------------------------------
