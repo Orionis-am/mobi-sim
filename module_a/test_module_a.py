@@ -8,12 +8,24 @@ to run this file.
 
 from __future__ import annotations
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless: these tests must never pop up a GUI window
+
 import numpy as np
 import pytest
+from matplotlib import pyplot as plt
+from matplotlib.figure import Figure
 
-from module_a import codecs, metrics, mushra_sim, synth_audio, whisper_eval
+from module_a import codecs, metrics, mushra_sim, synth_audio, visualize, whisper_eval
 
 SR = 8_000
+
+
+@pytest.fixture(autouse=True)
+def _close_figures():
+    yield
+    plt.close("all")
 
 
 @pytest.fixture
@@ -281,6 +293,92 @@ class TestSummarizeMushra:
                 entry = summary[codec][group]
                 assert set(entry) == {"mean", "ci_low", "ci_high"}
                 assert entry["ci_low"] <= entry["mean"] <= entry["ci_high"]
+
+
+# --- visualize -------------------------------------------------------------
+
+
+@pytest.fixture
+def mushra_summary():
+    panel = mushra_sim.simulate_mushra_panel(seed=0)
+    return mushra_sim.summarize_mushra(panel, seed=0)
+
+
+@pytest.fixture
+def pesq_by_codec():
+    return {"aac": 4.47, "gsm": 3.93, "opus": 4.50}
+
+
+@pytest.fixture
+def wer_by_codec():
+    return {"aac": 0.15, "gsm": 0.05, "opus": 0.02}
+
+
+class TestPlotMushraComparison:
+    def test_returns_figure_with_one_xtick_per_codec(self, mushra_summary):
+        fig = visualize.plot_mushra_comparison(mushra_summary)
+        assert isinstance(fig, Figure)
+        ax = fig.axes[0]
+        assert len(ax.get_xticks()) == len(mushra_summary)
+
+    def test_legend_lists_both_groups(self, mushra_summary):
+        fig = visualize.plot_mushra_comparison(mushra_summary)
+        legend_labels = {t.get_text() for t in fig.axes[0].get_legend().get_texts()}
+        assert legend_labels == {"english", "native"}
+
+
+class TestPlotMetricBar:
+    def test_returns_figure_with_one_bar_per_codec(self, pesq_by_codec):
+        fig = visualize.plot_metric_bar(pesq_by_codec, ylabel="PESQ-NB", title="t")
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].patches) == len(pesq_by_codec)
+
+
+class TestMushraGrandMean:
+    def test_averages_across_groups(self, mushra_summary):
+        grand_mean = visualize.mushra_grand_mean(mushra_summary)
+        for codec, groups in mushra_summary.items():
+            expected = np.mean([g["mean"] for g in groups.values()])
+            assert grand_mean[codec] == pytest.approx(expected)
+
+
+class TestBuildCorrelationTable:
+    def test_merges_all_three_metrics_per_codec(self, pesq_by_codec, wer_by_codec, mushra_summary):
+        table = visualize.build_correlation_table(pesq_by_codec, wer_by_codec, mushra_summary)
+        assert set(table) == set(pesq_by_codec)
+        for codec in table:
+            assert table[codec]["pesq"] == pesq_by_codec[codec]
+            assert table[codec]["wer"] == wer_by_codec[codec]
+            assert isinstance(table[codec]["mushra"], float)
+
+
+class TestPlotCorrelationMatrix:
+    def test_returns_figure_sized_by_metric_count(self, pesq_by_codec, wer_by_codec, mushra_summary):
+        table = visualize.build_correlation_table(pesq_by_codec, wer_by_codec, mushra_summary)
+        fig = visualize.plot_correlation_matrix(table)
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].get_xticks()) == 3  # pesq, wer, mushra
+
+    def test_constant_metric_does_not_crash(self):
+        # A metric with zero variance (e.g. identical WER across codecs)
+        # makes Pearson correlation undefined (NaN) for that row/column;
+        # plotting it must degrade gracefully, not raise.
+        table = {
+            "aac": {"pesq": 4.0, "wer": 0.1},
+            "gsm": {"pesq": 3.5, "wer": 0.1},
+            "opus": {"pesq": 4.5, "wer": 0.1},
+        }
+        fig = visualize.plot_correlation_matrix(table)
+        assert isinstance(fig, Figure)
+
+
+class TestSaveFigure:
+    def test_writes_png_to_output_dir(self, tmp_path, pesq_by_codec):
+        fig = visualize.plot_metric_bar(pesq_by_codec, ylabel="PESQ-NB", title="t")
+        out_path = visualize.save_figure(fig, "pesq.png", output_dir=tmp_path)
+        assert out_path == tmp_path / "pesq.png"
+        assert out_path.exists()
+        assert out_path.stat().st_size > 0
 
 
 # --- whisper_eval ------------------------------------------------------
