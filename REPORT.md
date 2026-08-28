@@ -123,11 +123,45 @@ humains/MUSHRA et WER (le sujet demande explicitement d'analyser cet écart dans
 pure) plutôt que supposé valide — noté ici pour ne pas l'oublier avant la matrice de corrélation
 de `visualize.py`.
 
+### `whisper_eval.py`
+
+**Choix** : trois fonctions publiques —
+- `transcribe(signal, sample_rate, client=None)` — encode le signal en WAV en mémoire (réutilise
+  `signal_to_wav_bytes` de `synth_audio.py`) et appelle
+  `client.audio.transcriptions.create(model="whisper-1", file=(...))`. `client` est injectable
+  (facilite les tests sans clé API réelle et le partage d'un seul client sur plusieurs appels).
+- `word_error_rate(reference_text, hypothesis_text)` — WER via `jiwer.wer`.
+- `evaluate_intelligibility` / `evaluate_codecs_intelligibility` — enchaînent transcription + WER
+  pour un signal, ou pour un dict `{codec: signal_dégradé}` en réutilisant un seul client.
+
+**Pourquoi normaliser le texte avant le calcul du WER** : `jiwer.wer` brut compare mot à mot sans
+normalisation — hors Whisper renvoie systématiquement un texte avec majuscules et ponctuation
+(ex. « The quick brown fox. ») alors que notre texte de référence n'en a pas forcément la même
+forme exacte. Sans normalisation, une transcription parfaite au niveau intelligibilité serait quand
+même comptée en erreur à cause de la casse/ponctuation — ce n'est pas ce qu'on veut mesurer (on
+veut l'intelligibilité du contenu, pas le style de formatage de Whisper). `_WER_NORMALIZE`
+(`jiwer.Compose` : minuscules, suppression ponctuation, espaces multiples, strip) est appliqué aux
+deux côtés avant comparaison.
+
+**Test réalisé** (sans clé API — un client Whisper factice est injecté pour vérifier le câblage
+sans dépenser de crédit) :
+- `word_error_rate` : texte identique casse/ponctuation différente → `0.0` ; une vraie substitution
+  de mot (« fox » → « fax ») → `0.25`, comme attendu.
+- `transcribe` avec un client factice retournant `" The quick brown fox. "` → texte bien strippé,
+  format `(filename, bytes, content_type)` du fichier envoyé validé (WAV en mémoire, >44 octets
+  d'en-tête).
+- `evaluate_codecs_intelligibility` sur un dict `{aac, gsm, opus}` → bien un dict de résultats par
+  codec, chacun avec `transcription` et `wer` à `0.0` (texte de référence identique après
+  normalisation).
+
+Pas encore testé contre la vraie API Whisper (nécessite `OPENAI_API_KEY`, coût réel) — à faire une
+fois `fitness.py`/tests d'intégration en place, avec des clips courts pour limiter la dépense
+(~0,006 USD/min, cf. CLAUDE.md).
+
 ---
 
 ## En attente / pas encore implémenté
 
-- `module_a/whisper_eval.py` — transcription Whisper + WER via `jiwer`.
 - `module_a/mushra_sim.py` — simulation panel MUSHRA (IC 95% par bootstrap).
 - `module_a/visualize.py` — graphiques MUSHRA/PESQ/WER + matrice de corrélation PESQ×MUSHRA×WER.
 - `module_a/fitness.py` — contrat `codec_fitness(chromosome)` pour le Module F.
