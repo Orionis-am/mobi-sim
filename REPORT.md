@@ -286,9 +286,71 @@ métrique — géré en affichant `"n/a"` dans la case plutôt que de planter ou
 `plot_metric_bar` (labels posés sans `set_xticks()` préalable) — corrigé en fixant les ticks
 numériques avant de poser les labels, comme le fait déjà `plot_mushra_comparison`.
 
+### `fitness.py`
+
+**Contexte** : dernier fichier du Module A. Expose le contrat `codec_fitness(chromosome)` que le
+Module F (Pb1, AG via DEAP) doit pouvoir appeler tel quel. Chromosome imposé par le sujet (§3
+Module F) : `[bitrate ∈ {8,12,16,24,32} kbps, frame_size ∈ {10,20,30,40} ms, plc_level ∈ [0,1],
+codec ∈ {0=AAC, 1=GSM, 2=Opus}]`, fitness `f(x) = w1·PESQ_sim(x) + w2·(1−WER(x)) −
+w3·(bitrate/bitrate_max)`, poids configurables, contrainte `bitrate ≤ B_max` gérée par pénalité.
+
+**Décision structurante — signature à un seul argument** : le sujet écrit littéralement
+`codec_fitness(chromosome)`, pas `codec_fitness(chromosome, reference_signal, ...)`. Comme un AG
+peut appeler cette fonction des milliers de fois par run, régénérer le signal de référence (appel
+réseau gTTS) à chaque évaluation serait à la fois ruineux en temps et rendrait la fitness non
+reproductible d'un run à l'autre. Solution : un cache module-level (`_get_reference_signal`)
+génère le signal une seule fois par fréquence d'échantillonnage et le réutilise ensuite. La
+fonction plus riche `codec_fitness_components(chromosome, reference_signal, **overrides)` reste
+disponible pour les tests/le debug (elle prend le signal en paramètre explicite, pas de cache).
+Conformément à CLAUDE.md (« garder la signature stable une fois que Module F en dépend »), cette
+signature est actée maintenant, avant que Module F n'existe, pour ne pas avoir à la casser plus
+tard.
+
+**Décision — pas de vrai WER dans la boucle de l'AG** : la formule du sujet inclut `WER(x)`, mais
+appeler la vraie API Whisper (whisper_eval.py) à chaque évaluation d'individu est incompatible
+avec un AG (des milliers d'appels payants + latence réseau, cf. tableau des API externes de
+CLAUDE.md). `estimate_wer_proxy(pesq_nb)` fournit à la place une estimation gratuite, déterministe
+et heuristique (pas mesurée) : `wer ≈ (1 − pesq_normalisé)²`, décroissante, bornée à `[0,1]`,
+calibrée uniquement sur les valeurs extrêmes de PESQ (0 à PESQ_MAX, 1 à PESQ_MIN). Un vrai
+`wer_fn` (fermeture appelant `whisper_eval.evaluate_intelligibility`) reste injectable pour une
+passe de validation ponctuelle (ex. sur les meilleurs individus finaux de l'AG) — c'est exactement
+le fil rouge « sim vs. réel » que CLAUDE.md demande de garder vivant dans tout le projet.
+
+**Décision — traduire bitrate/frame_size/plc_level en paramètres que codecs.py comprend** :
+`codecs.py` ne connaît que `target_snr_db`/`cutoff_hz`, pas un « bitrate » à proprement parler.
+- `bitrate` → interpolation linéaire vers un `target_snr_db` (10 dB à 8 kbps, 45 dB à 32 kbps,
+  bornes choisies arbitrairement mais documentées ici, indépendantes du codec choisi — plus de
+  bits égale toujours moins de bruit de quantification, quel que soit le codec).
+- `frame_size` + `plc_level` → aucune notion de perte de paquets n'existe ailleurs dans le Module
+  A (le modèle de dégradation est par échantillon, pas par paquet) ; `_apply_packet_loss` simule
+  donc un modèle minimal : un taux de perte fixe (`packet_loss_rate`, pas un gène du chromosome)
+  fait disparaître des trames de longueur `frame_size_ms`, remplacées par `plc_level` fois la
+  dernière trame valide (dissimulation par répétition atténuée — `plc_level=1` répète la dernière
+  trame à pleine puissance, `plc_level=0` laisse un silence brut).
+
+**Constat empirique important, à documenter dans le rapport final** : en isolant l'effet du
+bitrate (`packet_loss_rate=0`), le PESQ simplifié suit bien la SNR cible et la fitness par défaut
+présente un **optimum intérieur réel** autour de 16-24 kbps (le gain de PESQ au-delà ne compense
+plus la pénalité de bitrate) — exactement le genre de compromis qu'un AG doit pouvoir découvrir.
+Mais avec le taux de perte de paquets initialement choisi (3 %), la perte d'une seule trame de
+20 ms suffisait à faire chuter le PESQ autant que toute la plage de SNR testée (10 à 45 dB),
+noyant complètement le signal du bitrate dans le bruit d'échantillonnage de l'AG (quelle trame
+tombe, par hasard, dépend du seed bien plus que du bitrate choisi). `DEFAULT_PACKET_LOSS_RATE` a
+donc été réduit à **1 %**, qui reste réaliste (cf. littérature G.107 : 1 % correspond à un
+« bon réseau ») tout en laissant le signal du bitrate généralement observable — mais pas
+systématiquement : sur 5 seeds testés à la main, 3 montrent l'optimum intérieur attendu, 2 restent
+dominés par une perte de trame malchanceuse. Cette variance résiduelle n'est **pas corrigée
+davantage ici** : c'est un vrai comportement stochastique de la simulation, pas un bug, et son
+traitement (moyenner la fitness sur plusieurs seeds par individu, par exemple) relève du choix de
+conception de l'AG lui-même dans le Module F, pas du contrat `fitness.py`. À mentionner
+explicitement dans le rapport final comme limite connue et compromis assumé.
+
+**Résultats de test** : 78 tests au total (31 nouveaux pour ce fichier), tous verts ; couverture
+`module_a` : **97 %**, `fitness.py` à 100%.
+
 ---
 
 ## En attente / pas encore implémenté
 
-- `module_a/fitness.py` — contrat `codec_fitness(chromosome)` pour le Module F.
-- Modules B–F, non commencés.
+Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
+Modules B–F, non commencés.
