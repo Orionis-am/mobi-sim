@@ -158,6 +158,49 @@ Pas encore testé contre la vraie API Whisper (nécessite `OPENAI_API_KEY`, coû
 fois `fitness.py`/tests d'intégration en place, avec des clips courts pour limiter la dépense
 (~0,006 USD/min, cf. CLAUDE.md).
 
+### `test_module_a.py`
+
+**Décision** : plutôt que de repousser les tests à la fin du module (l'ordre du sujet §3 les liste
+en dernier), on les écrit dès que 4 fichiers existent, conformément à la nouvelle section « Git
+handling »/pratique d'ingénieur — détecter les régressions tôt plutôt qu'après avoir accumulé du
+code non testé sur `mushra_sim.py`/`visualize.py`/`fitness.py`.
+
+**Choix** : tests unitaires purs, aucun accès réseau ni clé API requis pour lancer la suite.
+- `synth_audio.py` : `_synth_via_gtts`/`_synth_via_pyttsx3` sont monkeypatchées (jamais de vrai
+  appel réseau/moteur TTS) ; `_resample`, `_wav_bytes_to_mono_float` (mono et stéréo) et
+  `signal_to_wav_bytes` sont testées directement sur des tableaux synthétiques.
+- `codecs.py` : forme/dtype/finitude de sortie, crête alignée sur la référence, reproductibilité
+  par seed, dispatcher insensible à la casse, codec inconnu → `ValueError`.
+- `metrics.py` : cas limites (signal identique → SNR infini, PESQ au maximum ; silence et signal
+  très court → pas de NaN).
+- `whisper_eval.py` : un client OpenAI factice (classe Python simple, pas de mock réseau) vérifie
+  le format du fichier envoyé (`(nom, bytes, content-type)`, en-tête WAV) et le câblage
+  transcription→WER ; `_client()` testé avec une clé factice (aucun appel réseau déclenché par le
+  simple constructeur `OpenAI(api_key=...)`).
+
+**Bugs trouvés et corrigés en écrivant les tests** (aucun des deux ne s'était manifesté sur la
+tonalité de test de 1 seconde utilisée jusqu'ici — seulement sur des signaux volontairement très
+courts) :
+
+1. **`codecs._add_pre_echo`** : la fenêtre de lissage d'énergie (20 ms → 160 échantillons à 8 kHz)
+   pouvait dépasser la longueur du signal ; `np.convolve(..., mode="same")` renvoyait alors un
+   tableau *plus long* que le signal, produisant des indices de transitoire hors bornes et un
+   crash dans `simulate_aac`. Corrigé en bornant la fenêtre à `len(x)`.
+2. **`metrics._magnitude_spectrogram`** : `noverlap` était calculé à partir de la fenêtre de 32 ms
+   demandée, mais `scipy.signal.stft` réduit silencieusement `nperseg` à la longueur du signal
+   pour les entrées courtes sans toucher à `noverlap` — d'où `noverlap >= nperseg` et une
+   `ValueError`. Corrigé en bornant les deux valeurs nous-mêmes de façon cohérente.
+
+**Nettoyage associé** : `_butter_filter` avait deux branches (passe-haut seul, passe-tout) qu'aucun
+appelant n'utilise (AAC ne passe jamais que `high`, GSM passe toujours `low` et `high`) — simplifié
+plutôt que testé, ce code mort n'avait pas lieu d'être maintenu.
+
+**Résultat** : 39 tests, tous verts. Couverture `module_a` : **94 %** (objectif CLAUDE.md : ≥75 %).
+Seules zones non couvertes, délibérément : les corps réels de `_synth_via_gtts`/`_synth_via_pyttsx3`
+(appels réseau/moteur TTS véritables, hors périmètre des tests unitaires) et une branche de garde
+dans `_add_pre_echo` (`idx == 0`) quasiment inatteignable en pratique (le premier élément de
+`d_energy` vaut toujours 0 par construction).
+
 ---
 
 ## En attente / pas encore implémenté
