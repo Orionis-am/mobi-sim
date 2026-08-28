@@ -2,9 +2,6 @@
 
 Student project revolving around mobile communications protocol, GSM architecture simulation and Evolutionnary Algortihm
 
-See [CLAUDE.md](CLAUDE.md) for the target architecture and [docs/SUJET.md](docs/SUJET.md) for the
-full project brief.
-
 ## Setup
 
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
