@@ -24,16 +24,13 @@ from scipy import signal as sps
 CODEC_BITRATES_KBPS = {"aac": 16, "gsm": 13, "opus": 24}
 
 
-def _butter_filter(x: np.ndarray, sr: int, low: float | None = None, high: float | None = None, order: int = 4) -> np.ndarray:
+def _butter_filter(x: np.ndarray, sr: int, high: float, low: float | None = None, order: int = 4) -> np.ndarray:
+    """Low-pass at ``high``, or band-pass between ``low`` and ``high`` when ``low`` is given."""
     nyq = sr / 2.0
-    if low is not None and high is not None:
+    if low is not None:
         b, a = sps.butter(order, [low / nyq, high / nyq], btype="band")
-    elif high is not None:
-        b, a = sps.butter(order, high / nyq, btype="low")
-    elif low is not None:
-        b, a = sps.butter(order, low / nyq, btype="high")
     else:
-        return x
+        b, a = sps.butter(order, high / nyq, btype="low")
     return sps.filtfilt(b, a, x).astype(np.float32)
 
 
@@ -51,7 +48,7 @@ def _add_pre_echo(x: np.ndarray, sr: int, rng: np.random.Generator, n_transients
     quantization spreads a transient's coding noise across the whole
     analysis window, audible as noise *before* the transient's true onset.
     """
-    frame = max(1, int(sr * 0.02))
+    frame = max(1, min(int(sr * 0.02), len(x)))
     energy = np.convolve(x**2, np.ones(frame) / frame, mode="same")
     d_energy = np.diff(energy, prepend=energy[0])
     onset_idx = np.argsort(d_energy)[-n_transients:]
