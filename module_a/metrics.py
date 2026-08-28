@@ -38,8 +38,11 @@ def snr_db(reference: np.ndarray, degraded: np.ndarray) -> float:
 
 
 def _magnitude_spectrogram(x: np.ndarray, sr: int, frame_ms: float = 32.0, hop_ms: float = 16.0) -> np.ndarray:
-    nperseg = max(8, int(sr * frame_ms / 1000))
-    noverlap = max(0, nperseg - int(sr * hop_ms / 1000))
+    # nperseg must not exceed len(x): scipy silently clips it internally for
+    # short inputs, but leaves noverlap untouched, which then violates
+    # noverlap < nperseg unless we clip both consistently here.
+    nperseg = min(max(8, int(sr * frame_ms / 1000)), len(x))
+    noverlap = max(0, min(nperseg - int(sr * hop_ms / 1000), nperseg - 1))
     _, _, zxx = sps.stft(x, fs=sr, nperseg=nperseg, noverlap=noverlap)
     return np.abs(zxx)
 
