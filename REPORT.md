@@ -201,11 +201,60 @@ Seules zones non couvertes, délibérément : les corps réels de `_synth_via_gt
 dans `_add_pre_echo` (`idx == 0`) quasiment inatteignable en pratique (le premier élément de
 `d_energy` vaut toujours 0 par construction).
 
+### `mushra_sim.py`
+
+**Contexte** : le rapport de référence ne publie que les scores MUSHRA *moyens* par groupe
+d'auditeurs (English speakers, Native speakers) et par codec — pas les notes individuelles brutes.
+Pour pouvoir calculer un intervalle de confiance ou une corrélation avec PESQ/WER, il faut simuler
+un panel plausible plutôt que travailler sur trois nombres isolés.
+
+**Choix** :
+- `simulate_panel_ratings(mean, std=15.0, n_listeners=20, seed=None)` — tire les notes d'un panel
+  via une loi normale centrée sur la moyenne rapportée, **bornée à [0, 100]** (l'échelle MUSHRA est
+  bornée, contrairement à la loi normale — sans ce clip, un tirage pourrait produire une note
+  invalide comme 105 ou -3).
+- `simulate_mushra_panel(means=REPORTED_MEANS, ...)` — génère les 6 panels (3 codecs × 2 groupes)
+  d'un coup, chacun sur son propre flux RNG dérivé de `seed` pour rester reproductible sans
+  partager le même bruit d'échantillonnage entre codecs.
+- `bootstrap_ci(ratings, n_bootstrap=2000, ci=0.95, seed=None)` — IC 95% par **bootstrap** (tirage
+  avec remise des notes simulées, calcul de la moyenne à chaque tirage, percentile 2.5/97.5),
+  conformément au sujet — pas un IC gaussien classique (`mean ± 1.96·SE`), qui supposerait une
+  distribution non bornée et serait moins fidèle avec un échantillon de panel de petite taille.
+- `summarize_mushra(...)` — combine les deux pour produire `{codec: {groupe: {mean, ci_low,
+  ci_high}}}`, prêt pour `visualize.py`.
+
+**Choix assumé, à documenter dans le rapport final** : l'écart-type inter-auditeur (`DEFAULT_STD =
+15.0`) et la taille de panel (`DEFAULT_N_LISTENERS = 20`) sont des hypothèses plausibles (échelle
+MUSHRA 0-100, panels typiques de l'ordre de 10-30 auditeurs), pas des valeurs tirées du rapport
+fourni puisque celui-ci ne donne que les moyennes. Repère utile : docs/SUJET §Q1 demande déjà
+d'analyser l'écart PESQ/WER vs MUSHRA — le choix de std impactera la largeur des IC affichés,
+donc à mentionner explicitement comme hypothèse de simulation dans le rapport final, pas comme un
+fait mesuré.
+
+**Hors périmètre, volontairement** : pas de référence cachée ni d'ancrage passe-bas (méthodologie
+MUSHRA complète, norme ITU-R BS.1534) — le sujet ne demande de reproduire que les 3 vrais codecs
+du rapport fourni, pas le protocole MUSHRA complet.
+
+**Résultats de test** (`simulate_mushra_panel(seed=0)` puis `summarize_mushra(seed=0)`, 20
+auditeurs/groupe) :
+
+| Codec | Groupe | Moyenne simulée | IC 95% (bootstrap) |
+|---|---|---|---|
+| Opus | English | 55.0 | [49.1, 60.2] |
+| Opus | Native | 62.0 | [58.1, 65.8] |
+| GSM | English | 47.3 | [41.2, 53.1] |
+| GSM | Native | 49.4 | [41.5, 57.4] |
+| AAC | English | 34.4 | [26.4, 42.0] |
+| AAC | Native | 33.3 | [27.3, 39.5] |
+
+L'ordre Opus > GSM > AAC du rapport est bien préservé dans les deux groupes malgré le bruit de
+simulation. 47 tests au total (8 nouveaux pour ce fichier), tous verts ; couverture `module_a` :
+**95 %**, `mushra_sim.py` à 100 %.
+
 ---
 
 ## En attente / pas encore implémenté
 
-- `module_a/mushra_sim.py` — simulation panel MUSHRA (IC 95% par bootstrap).
 - `module_a/visualize.py` — graphiques MUSHRA/PESQ/WER + matrice de corrélation PESQ×MUSHRA×WER.
 - `module_a/fitness.py` — contrat `codec_fitness(chromosome)` pour le Module F.
 - `module_a/test_module_a.py` — tests unitaires (objectif ≥75% de couverture, cf. CLAUDE.md).
