@@ -1,0 +1,135 @@
+# MobiSim — Rapport de construction
+
+Journal continu des choix d'architecture, des justifications et des résultats de tests, mis à jour
+au fur et à mesure de l'implémentation. Voir [docs/SUJET.md](docs/SUJET.md) pour le sujet complet
+et [CLAUDE.md](CLAUDE.md) pour le résumé de l'architecture cible. Ce fichier est le compagnon
+« pourquoi » du code : le code reste sans commentaires là où le raisonnement est non-évident ;
+ce raisonnement vit ici à la place.
+
+---
+
+## Module A — Codecs audio & qualité perceptive
+
+### `synth_audio.py`
+
+**Choix** : le signal de parole de référence est synthétisé (gTTS en ligne, repli pyttsx3 hors
+ligne), jamais enregistré — aucune dépendance microphone, entièrement reproductible, généré en
+mémoire (`io.BytesIO`, aucune écriture disque). Normalisé à **8 kHz mono**, crête normalisée à 1.0.
+
+**Pourquoi 8 kHz** : c'est la fréquence d'échantillonnage de la téléphonie bande étroite
+(narrowband), pas une valeur par défaut arbitraire.
+- Le Nyquist (4 kHz) couvre exactement la bande vocale téléphonique classique 300–3400 Hz ; GSM
+  Full Rate est un vrai codec narrowband à 8 kHz, donc le simuler à 8 kHz est correct, pas
+  approximatif.
+- Le mode narrowband de l'ITU-T P.862 (PESQ) est défini à 8 kHz — garde notre PESQ simplifié
+  comparable en esprit au standard.
+- Les scores MUSHRA de référence du rapport fourni (Opus 57.7/61.4, GSM 48.0/51.4, AAC 34.9/36.2)
+  proviennent d'une expérience en contexte téléphonie narrowband (AAC@16kbps, GSM-FR) — rester à
+  8 kHz garde notre pipeline dans le même régime que les chiffres auxquels on se corrèle.
+- Moins coûteux : tableaux plus petits, filtrage plus rapide, transcription Whisper moins chère
+  (facturée à la minute).
+
+Conséquence : Opus est volontairement contraint dans une boîte narrowband très en dessous de ce
+qu'il sait réellement faire (wideband/HD) — c'est intentionnel, c'est ce qui rend la comparaison
+AAC/GSM/Opus équitable (apples-to-apples).
+
+### `codecs.py`
+
+**Choix** : trois simulateurs de dégradation (`simulate_aac`, `simulate_gsm`, `simulate_opus`),
+chacun `(signal, sr, target_snr_db=..., seed=...) -> signal_dégradé`, plus un dispatcher
+`simulate_codec(signal, sr, codec, **kwargs)`. Aucune librairie de codec propriétaire — les
+artefacts sont modélisés à la main selon la signature perceptive connue de chaque vrai codec :
+
+| Codec | Débit | Modèle |
+|---|---|---|
+| AAC | 16 kbps | Passe-bas (Butterworth, coupure ~3.8 kHz) + lissage **pré-écho** sur les transitoires détectés |
+| GSM-FR | 13 kbps | Passe-bande (300–3400 Hz) + bruit gaussien additif au SNR cible |
+| Opus | 24 kbps | Aucune limitation de bande (quasi-transparent) + légère distorsion harmonique cubique + bruit faible niveau |
+
+**Pourquoi du bruit additif, pas seulement du filtrage** : le bruit modélise le *bruit de
+quantification*, ce qu'un vrai codec avec pertes introduit réellement en quantifiant plus
+grossièrement pour atteindre un débit cible. Un filtre fixe seul ne donne qu'une différence binaire
+« limité en bande ou non » ; calibrer le bruit sur un `target_snr_db` donne un curseur de sévérité
+continu et ajustable — nécessaire plus tard pour que le Pb1 du `module_f` (AG de configuration
+codec) dispose d'un paysage de fitness lisse à optimiser plutôt que d'une fonction en marches
+d'escalier.
+
+**Pourquoi le pré-écho, AAC uniquement** : explicitement demandé par le sujet (« filtre passe-bas +
+artefacts de pré-écho via transitoires gaussiens »). Le pré-écho est un artefact réel et documenté
+des codecs par transformée en blocs (AAC, MP3) : le bruit de quantification est calculé par bloc
+d'analyse, donc un transitoire net partageant un bloc avec du contenu calme fait fuir du bruit
+*en arrière* dans le temps, audible juste avant l'attaque réelle. `_add_pre_echo` détecte les
+transitoires via des sauts d'énergie court-terme et injecte une rampe de bruit décroissante avant
+chacun d'eux. GSM (vocodeur, pas de ce mode de défaillance par transformée en blocs) et Opus
+(transparent à ce débit) n'en reçoivent pas.
+
+**Note de conception — enjeu narratif** : l'énigme du rapport fourni est que le PESQ-NB note Opus
+(1.52) et GSM (1.53) de façon quasi identique alors que MUSHRA et WER les séparent nettement.
+Modéliser la dégradation GSM comme du bruit large-bande plat (que pénalise proportionnellement une
+métrique de corrélation spectrale) vs. la dégradation AAC comme un pré-écho localisé dans le temps
+(que remarque à peine une corrélation globale sur tout le signal, mais que capte une oreille
+humaine ou une transcription ASR) est ce qui devrait permettre à `metrics.py` et `whisper_eval.py`
+de reproduire ce même écart plus tard, plutôt que d'avoir à le simuler artificiellement dans
+`visualize.py`.
+
+**Résultats de test** (tonalité de test synthétique, 440+1200+3000 Hz + transitoires artificiels
+injectés, 8 kHz, seed=42 — pas de la vraie parole, juste un test de fumée vérifiant que le pipeline
+tourne et produit des valeurs cohérentes) :
+
+| Codec | crête | NaN ? |
+|---|---|---|
+| AAC | 0.794 (crête alignée sur la référence) | Non |
+| GSM | 0.794 | Non |
+| Opus | 0.794 | Non |
+
+Dispatcher (`simulate_codec`) vérifié contre les appels directs ; un nom de codec inconnu lève une
+`ValueError` listant les options valides.
+
+Remarque de lint connue : le paramètre `sr` de `simulate_opus` n'est pas utilisé (Opus n'applique
+aucun filtrage) — conservé pour l'uniformité de signature entre les entrées de `SIMULATORS`, afin
+que le dispatcher puisse appeler les trois de façon identique.
+
+### `metrics.py`
+
+**Choix** : trois métriques objectives, toutes `(reference, degraded[, sr]) -> float` :
+- `snr_db` — SNR dans le domaine temporel.
+- `log_spectral_distortion` — LSD moyennée par trame entre spectrogrammes d'amplitude
+  (`scipy.signal.stft`).
+- `pesq_nb_simplified` — **pas** l'ITU-T P.862, aucune librairie PESQ propriétaire (conformément au
+  sujet). Construit comme
+  `spectral_weight · corrélation_spectrale + (1 − spectral_weight) · corrélation_enveloppe_temporelle`
+  (les deux via `scipy.stats.pearsonr`), remis à l'échelle de `[-1, 1]` vers la plage MOS-like PESQ
+  conventionnelle `[1.0, 4.5]`. `spectral_weight = 0.6` par défaut.
+- `all_metrics` regroupe les trois dans un dict pour la commodité.
+
+**Résultats de test** (même tonalité synthétique + transitoires artificiels que ci-dessus, 8 kHz,
+seed=42) :
+
+| Codec | SNR (dB) ↑ | LSD ↓ | PESQ-NB (sim) ↑ |
+|---|---|---|---|
+| AAC | 25.8 | 23.1 | 4.47 |
+| GSM | 13.8 | 30.9 | 3.93 |
+| Opus | 35.1 | 13.8 | 4.50 |
+
+Aucun NaN, aucun crash sur les trois codecs.
+
+**Observation ouverte à revérifier avec de la vraie parole** : sur cette tonalité synthétique, le
+PESQ simplifié classe AAC *au-dessus* de GSM — l'inverse de l'ordre MUSHRA du rapport fourni (AAC
+noté le plus mauvais globalement, 34.9/36.2). Ce n'est pas traité comme un bug : une métrique de
+corrélation naïve pénalise à peine le lissage pré-écho localisé de l'AAC, de la même façon que le
+vrai PESQ-NB est rapporté comme sous-pénalisant certains artefacts par rapport aux jugements
+humains/MUSHRA et WER (le sujet demande explicitement d'analyser cet écart dans le rapport, §Q1).
+À revérifier une fois exécuté sur de la vraie parole TTS (vrais transitoires, pas une tonalité
+pure) plutôt que supposé valide — noté ici pour ne pas l'oublier avant la matrice de corrélation
+de `visualize.py`.
+
+---
+
+## En attente / pas encore implémenté
+
+- `module_a/whisper_eval.py` — transcription Whisper + WER via `jiwer`.
+- `module_a/mushra_sim.py` — simulation panel MUSHRA (IC 95% par bootstrap).
+- `module_a/visualize.py` — graphiques MUSHRA/PESQ/WER + matrice de corrélation PESQ×MUSHRA×WER.
+- `module_a/fitness.py` — contrat `codec_fitness(chromosome)` pour le Module F.
+- `module_a/test_module_a.py` — tests unitaires (objectif ≥75% de couverture, cf. CLAUDE.md).
+- Modules B–F, non commencés.
