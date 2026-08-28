@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from module_a import codecs, metrics, synth_audio, whisper_eval
+from module_a import codecs, metrics, mushra_sim, synth_audio, whisper_eval
 
 SR = 8_000
 
@@ -219,6 +219,68 @@ class TestMetrics:
         tiny = np.array([0.1, 0.2, 0.3], dtype=np.float32)
         score = metrics.pesq_nb_simplified(tiny, tiny, SR)
         assert np.isfinite(score)
+
+
+# --- mushra_sim -----------------------------------------------------------
+
+
+class TestSimulatePanelRatings:
+    def test_shape_and_bounds(self):
+        ratings = mushra_sim.simulate_panel_ratings(50.0, std=15.0, n_listeners=30, seed=0)
+        assert ratings.shape == (30,)
+        assert np.all(ratings >= 0.0) and np.all(ratings <= 100.0)
+
+    def test_extreme_mean_is_clipped_to_scale(self):
+        ratings = mushra_sim.simulate_panel_ratings(100.0, std=50.0, n_listeners=50, seed=0)
+        assert np.all(ratings <= 100.0)
+        assert ratings.max() == pytest.approx(100.0)
+
+    def test_seed_reproducibility(self):
+        a = mushra_sim.simulate_panel_ratings(50.0, seed=1)
+        b = mushra_sim.simulate_panel_ratings(50.0, seed=1)
+        np.testing.assert_array_equal(a, b)
+
+
+class TestSimulateMushraPanel:
+    def test_covers_every_codec_and_group(self):
+        panel = mushra_sim.simulate_mushra_panel(seed=0)
+        assert set(panel) == set(mushra_sim.REPORTED_MEANS)
+        for codec, groups in mushra_sim.REPORTED_MEANS.items():
+            assert set(panel[codec]) == set(groups)
+
+    def test_ranking_roughly_matches_reported_means(self):
+        # With enough listeners, simulated group means should preserve the
+        # report's codec ordering (Opus > GSM > AAC) even after clipping.
+        panel = mushra_sim.simulate_mushra_panel(n_listeners=200, seed=0)
+        opus_mean = np.mean(panel["opus"]["english"])
+        gsm_mean = np.mean(panel["gsm"]["english"])
+        aac_mean = np.mean(panel["aac"]["english"])
+        assert opus_mean > gsm_mean > aac_mean
+
+
+class TestBootstrapCi:
+    def test_constant_ratings_give_a_degenerate_interval(self):
+        ratings = np.full(20, 42.0)
+        lower, upper = mushra_sim.bootstrap_ci(ratings, n_bootstrap=500, seed=0)
+        assert lower == pytest.approx(42.0)
+        assert upper == pytest.approx(42.0)
+
+    def test_interval_contains_sample_mean(self):
+        ratings = mushra_sim.simulate_panel_ratings(60.0, n_listeners=25, seed=2)
+        lower, upper = mushra_sim.bootstrap_ci(ratings, n_bootstrap=1000, seed=3)
+        assert lower <= float(np.mean(ratings)) <= upper
+
+
+class TestSummarizeMushra:
+    def test_summary_structure_and_values(self):
+        panel = mushra_sim.simulate_mushra_panel(seed=0)
+        summary = mushra_sim.summarize_mushra(panel, n_bootstrap=500, seed=0)
+
+        for codec, groups in mushra_sim.REPORTED_MEANS.items():
+            for group in groups:
+                entry = summary[codec][group]
+                assert set(entry) == {"mean", "ci_low", "ci_high"}
+                assert entry["ci_low"] <= entry["mean"] <= entry["ci_high"]
 
 
 # --- whisper_eval ------------------------------------------------------
