@@ -405,6 +405,81 @@ venir ; même séparation que `codecs.py`/`fitness.py` en Module A) :
 **Résultats de test** : 11 tests, tous verts (registration HLR, cycle attach/detach VLR, les 4
 combinaisons de routabilité MSC, et les deux chemins de `Smsc.deliver`).
 
+### `pdu.py`
+
+**Contexte important** : le sujet demande de « valider en encodant/décodant les exemples
+hexadécimaux du cours » — mais aucun exemple hexadécimal n'existe nulle part dans ce dépôt
+(`docs/SUJET.md` ne contient que la phrase, pas de PDU réel ; le cours source cité en §6.3 n'est
+pas fourni). Plutôt que d'inventer une chaîne hex et de prétendre qu'elle vient « du cours » (ce qui
+serait trompeur et invérifiable), la validation s'appuie sur des tests d'aller-retour
+(`decode(encode(x)) == x`) sur de nombreux cas, plus un exemple calculé et vérifié à la main
+ci-dessous pour la partie la plus piégeuse (l'empaquetage 7 bits).
+
+**Choix — portée volontairement limitée** : alphabet GSM 7 bits par défaut uniquement (table
+d'extension non supportée — `€`, `[`, `{`, etc. lèvent `ValueError` plutôt que d'être mal encodés
+silencieusement), pas d'en-tête UDH / SMS concaténé, format de validité relative uniquement pour
+TP-VP (pas absolu/enhanced), fuseau horaire toujours UTC+0 dans TP-SCTS (simulation locale, pas de
+vrai décalage horaire à modéliser).
+
+**Alphabet GSM 7 bits (3GPP TS 23.038)** : table explicite indexée par octet (dict `{index: char}`)
+plutôt qu'une supposition « c'est presque de l'ASCII » — les zones 0x20-0x3F/0x41-0x5A/0x61-0x7A
+coïncident bien avec l'ASCII, mais pas le reste (ex. index 0x00 = `@`, pas NUL ; lettres
+accentuées, signe monnaie, lettres grecques utilisées en physique). Un test dédié
+(`test_at_sign_is_index_zero_not_ascii_nul`) vérifie spécifiquement ce piège.
+
+**Empaquetage 7 bits — vérifié à la main** : les septets sont concaténés en un flux de bits
+(LSB en premier), puis découpés en octets de 8 bits (LSB en premier aussi) — implémenté via un
+entier Python (`value |= septet << (7*i)` puis `.to_bytes(..., "little")`), pas une boucle de bits
+manuelle, mais mathématiquement identique. Vérifié à la main pour `"Hi"` (H=0x48, i=0x69) :
+- 0x48 en 7 bits (LSB→MSB) : `0,0,0,1,0,0,1`
+- 0x69 en 7 bits (LSB→MSB) : `1,0,0,1,0,1,1`
+- Flux concaténé (14 bits) + 2 bits de bourrage à 0 : `00010011 00101100`
+- Premier octet `00010011` (lu LSB→MSB) = 8+64+128 = **0xC8**
+- Second octet `00101100` (lu LSB→MSB) = 4+16+32 = **0x34**
+
+Le code produit bien `pack_septets([0x48, 0x69]) == bytes([0xC8, 0x34])` — testé explicitement
+(`test_two_septets_pack_as_hand_computed`, avec aussi le cas `"A","B"` plus simple en commentaire
+dans le code). Comme le PDU transporte `TP-UDL` (le nombre exact de septets) séparément, le
+décodage n'a pas besoin de la technique de désambiguïsation des bits de bourrage que mentionnent
+certains tutoriels GSM7 pour un nombre de septets ≡ 7 (mod 8) — on dépaquette simplement les
+`TP-UDL` premiers septets et le reste (bits de bourrage) est ignoré.
+
+**Bug trouvé en écrivant les tests** : `_encode_bcd_pair` (champs de `TP-SCTS`) inversait l'ordre du
+swap semi-octet par rapport à `_encode_bcd_digits` (adresses) — `(tens<<4)|units` au lieu de
+`(units<<4)|tens`. Invisible sur `_decode_bcd_pair` seul (test isolé aurait pu passer par
+coïncidence), détecté par le test d'aller-retour `TestScts::test_round_trip` qui échouait avec
+`ValueError: month must be in 1..12` (les nibbles inversés donnaient un mois à deux chiffres
+invalide). Corrigé pour utiliser la même convention de swap que les adresses.
+
+**Deux conventions de longueur différentes, gardées séparées exprès** : `TP-DA`/`TP-OA` compte des
+*chiffres décimaux* dans son octet de longueur, alors que l'info SMSC compte des *octets*
+(type-adresse + BCD) — piège classique documenté. `encode_address_field`/`decode_address_field` et
+`encode_smsc_field`/`decode_smsc_field` sont deux paires de fonctions distinctes plutôt qu'une
+seule paramétrée, précisément pour ne pas risquer de mélanger les deux conventions.
+
+**Exemple complet vérifié** (`SubmitPdu(destination="+33612345678", text="Hi")`, pas de SMSC ni de
+durée de validité) :
+
+```
+00 01 00 0B 91 3316325476F8 00 00 02 C834
+```
+
+| Octets | Champ | Valeur |
+|---|---|---|
+| `00` | info SMSC | absente (utiliser le SMSC par défaut) |
+| `01` | premier octet | TP-MTI=01 (SUBMIT), TP-VPF=00 (pas de VP) |
+| `00` | TP-MR | référence 0 |
+| `0B 91 3316325476F8` | TP-DA | 11 chiffres, international (0x91), `33612345678` en BCD swappé + bourrage `F` |
+| `00` | TP-PID | normal |
+| `00` | TP-DCS | alphabet GSM 7 bits par défaut |
+| `02` | TP-UDL | 2 septets |
+| `C8 34` | TP-UD | `"Hi"` empaqueté — valeur vérifiée à la main ci-dessus |
+
+**Résultats de test** : 32 nouveaux tests (43 au total pour `module_b`), tous verts. Couverture
+`pdu.py` : 99 % ; seule `gsm7_decode`'s branche d'erreur (`KeyError→ValueError` sur un septet
+invalide) reste non couverte, laissée délibérément non déclenchée, même logique que pour
+`whisper_eval.py` en Module A. `entities.py` reste à 100 %.
+
 ---
 
 ## En attente / pas encore implémenté
