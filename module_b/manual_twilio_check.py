@@ -16,30 +16,22 @@ numbers) in the environment or a .env file at the repo root.
 from __future__ import annotations
 
 import os
-import time
 
 from dotenv import load_dotenv
 
-from module_b import twilio_client
-
-TERMINAL_STATUSES = {"delivered", "failed", "undelivered"}
+from module_b import compare
 
 
 def main() -> None:
     load_dotenv()
     to = os.environ["TWILIO_TEST_TO_NUMBER"]
 
-    print(f"Sending real SMS to {to}...")
-    result = twilio_client.send_sms(to, "MobiSim Module B smoke test — real Twilio trial send.")
-    print(f"Sent: sid={result.sid} status={result.status}")
+    print(f"Sending real SMS to {to} and polling for delivery status...")
+    sample = compare.measure_real_delivery(to, "MobiSim Module B smoke test — real Twilio trial send.")
 
-    print("Polling for delivery status...")
-    for _ in range(10):
-        time.sleep(2)
-        status = twilio_client.get_delivery_status(result.sid)
-        print(f"  status={status.status} error_code={status.error_code}")
-        if status.status in TERMINAL_STATUSES:
-            break
+    print(f"accept_latency_s={sample.accept_latency_s:.2f}")
+    print(f"delivery_latency_s={sample.delivery_latency_s}")
+    print(f"final_status={sample.final_status}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from module_b import entities, network_sim, pdu, twilio_client
+from module_b import compare, entities, network_sim, pdu, twilio_client
 
 # --- entities ---------------------------------------------------------------
 
@@ -439,3 +439,83 @@ class TestHandleStatusWebhook:
         payload = {"MessageSid": "SM123", "MessageStatus": "failed", "ErrorCode": "30006"}
         status = twilio_client.handle_status_webhook(payload)
         assert status.error_code == 30006
+
+
+# --- compare ---------------------------------------------------------------
+
+
+class _FakeClock:
+    """now()/sleep() pair where sleep() advances the clock — no real waiting in tests."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.t += seconds
+
+
+class TestMeasureRealDelivery:
+    def test_polls_until_terminal_status_and_measures_latencies(self):
+        client = FakeTwilioClient()
+        clock = _FakeClock()
+        first_sid = "SM" + "1".rjust(32, "0")
+
+        def sleep_and_mark_delivered(seconds: float) -> None:
+            clock.sleep(seconds)
+            client.messages._messages[first_sid].status = "delivered"
+
+        sample = compare.measure_real_delivery(
+            "+15551234567", "hi", from_="+15550000000", client=client,
+            poll_interval_s=2.0, poll_timeout_s=60.0,
+            sleep=sleep_and_mark_delivered, now=clock.now,
+        )
+
+        assert sample.accept_latency_s == pytest.approx(0.0)
+        assert sample.delivery_latency_s == pytest.approx(2.0)
+        assert sample.delivered is True
+        assert sample.final_status == "delivered"
+
+    def test_gives_up_at_timeout_without_terminal_status(self):
+        client = FakeTwilioClient()
+        clock = _FakeClock()
+
+        sample = compare.measure_real_delivery(
+            "+15551234567", "hi", from_="+15550000000", client=client,
+            poll_interval_s=2.0, poll_timeout_s=3.0,
+            sleep=clock.sleep, now=clock.now,
+        )
+
+        assert sample.delivery_latency_s is None
+        assert sample.delivered is False
+        assert sample.final_status == "queued"
+
+
+class TestSummarizeRealSamples:
+    def test_empty_list_gives_zeroed_stats(self):
+        stats = compare.summarize_real_samples([])
+        assert stats == compare.RealStats(n_samples=0, delivery_rate=0.0, mean_accept_latency_s=0.0, mean_delivery_latency_s=None)
+
+    def test_aggregates_across_samples(self):
+        samples = [
+            compare.RealDeliverySample(accept_latency_s=1.0, delivery_latency_s=4.0, delivered=True, final_status="delivered"),
+            compare.RealDeliverySample(accept_latency_s=3.0, delivery_latency_s=None, delivered=False, final_status="queued"),
+        ]
+        stats = compare.summarize_real_samples(samples)
+        assert stats.n_samples == 2
+        assert stats.delivery_rate == pytest.approx(0.5)
+        assert stats.mean_accept_latency_s == pytest.approx(2.0)
+        assert stats.mean_delivery_latency_s == pytest.approx(4.0)  # only the known one counts
+
+
+class TestBuildComparisonTable:
+    def test_shapes_simulated_and_real_side_by_side(self):
+        simulated = network_sim.BatchDeliveryStats(n_messages=100, delivery_rate=0.9, mean_delay_s=3.0, mean_attempts=1.2)
+        real = compare.RealStats(n_samples=5, delivery_rate=1.0, mean_accept_latency_s=0.4, mean_delivery_latency_s=6.0)
+
+        table = compare.build_comparison_table(simulated, real)
+
+        assert table["simulated"] == {"mean_delay_s": 3.0, "delivery_rate": 0.9}
+        assert table["real"] == {"mean_accept_latency_s": 0.4, "mean_delivery_latency_s": 6.0, "delivery_rate": 1.0, "n_samples": 5}

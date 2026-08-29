@@ -548,6 +548,30 @@ réseau — `manual_twilio_check.py` couvre ça, à la demande seulement.
 `manual_whisper_check.py` en Module A — n'affecte pas le seuil global du projet, 95 % tous modules
 confondus).
 
+### `compare.py`
+
+**Choix** : trois fonctions, aucune ne code en dur les causes de l'écart sim/réel — c'est la
+matière du rapport final (§8 Q2 du sujet : « ≥3 causes structurelles »), pas du code :
+- `measure_real_delivery(to, body, ...)` — envoie un vrai SMS et chronomètre deux latences
+  distinctes : `accept_latency_s` (temps d'acceptation par l'API Twilio) et `delivery_latency_s`
+  (temps jusqu'au statut terminal `delivered`/`failed`/`undelivered`, par polling). `sleep`/`now`
+  sont injectables (comme `client`) précisément pour ne jamais vraiment attendre en test.
+- `summarize_real_samples(samples)` — agrège plusieurs mesures réelles (taux de livraison, latence
+  moyenne d'acceptation, latence moyenne de livraison **sur les seuls échantillons l'ayant
+  atteinte** — un timeout ne doit pas silencieusement tirer la moyenne vers le bas).
+- `build_comparison_table(simulated, real)` — assemble stats simulées (`network_sim
+  .BatchDeliveryStats`) et stats réelles (`RealStats`) côte à côte, même esprit que
+  `visualize.build_correlation_table` en Module A.
+
+**Refactoring associé** : `manual_twilio_check.py` (Module B, commit précédent) simplifié pour
+réutiliser `measure_real_delivery` plutôt que dupliquer sa propre boucle de polling — la logique
+de mesure temporelle n'existe plus qu'à un seul endroit.
+
+**Résultats de test** : 5 nouveaux tests (68 au total), tous verts, y compris un test d'horloge
+factice (`sleep()` avance le temps simulé et fait progresser le statut du message factice —
+aucune vraie attente) couvrant à la fois le cas « livré après un poll » et le cas « timeout sans
+statut terminal ». Couverture `compare.py` : **100 %**.
+
 ---
 
 ## En attente / pas encore implémenté
