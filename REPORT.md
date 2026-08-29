@@ -154,9 +154,8 @@ sans dépenser de crédit) :
   codec, chacun avec `transcription` et `wer` à `0.0` (texte de référence identique après
   normalisation).
 
-Pas encore testé contre la vraie API Whisper (nécessite `OPENAI_API_KEY`, coût réel) — à faire une
-fois `fitness.py`/tests d'intégration en place, avec des clips courts pour limiter la dépense
-(~0,006 USD/min, cf. CLAUDE.md).
+Testé une première fois sans clé API (client factice, cf. ci-dessus), puis contre la vraie API
+Whisper via `manual_whisper_check.py` — voir la section dédiée ci-dessous pour le résultat.
 
 ### `test_module_a.py`
 
@@ -347,6 +346,41 @@ explicitement dans le rapport final comme limite connue et compromis assumé.
 
 **Résultats de test** : 78 tests au total (31 nouveaux pour ce fichier), tous verts ; couverture
 `module_a` : **97 %**, `fitness.py` à 100%.
+
+### `manual_whisper_check.py`
+
+**Contexte** : `test_module_a.py` mock volontairement le client OpenAI (cf. sa section ci-dessus) —
+la suite pytest ne dépense donc jamais de crédit API réel. Il manquait encore une vérification
+contre la vraie API Whisper, notée comme dette dans la section `whisper_eval.py` ci-dessus. Ce
+script n'est pas un fichier du découpage `docs/SUJET.md` §3 : c'est un utilitaire manuel, à lancer
+à la main (`uv run python -m module_a.manual_whisper_check`), pas via pytest — il dépense du crédit
+réel à chaque exécution.
+
+**Choix** : réutilise `synth_audio`/`codecs`/`metrics`/`whisper_eval` tels quels (aucune logique
+dupliquée) sur la phrase de référence par défaut (quelques secondes d'audio, coût négligeable),
+transcrit la référence propre puis chacun des trois signaux dégradés via un vrai client OpenAI, et
+affiche métriques locales + WER + transcription côte à côte.
+
+**Résultat obtenu (clé API réelle, deux exécutions identiques — `whisper-1` décode en greedy à
+température 0, donc reproductible sur un même audio, pas du bruit d'échantillonnage)** :
+
+| Codec | SNR (dB) | PESQ-NB (sim) | WER (réel) | Transcription |
+|---|---|---|---|---|
+| AAC | 21.4 | 4.50 | **0.000** | correcte, identique à la référence |
+| GSM | 4.3 | 4.20 | **0.000** | correcte, identique à la référence |
+| Opus | 35.0 | 4.50 | **1.000** | dérive en français + « lazy dog » → « AZ-Dog » |
+
+**Constat important, à documenter dans le rapport final (§Q1)** : c'est l'**inverse** de l'hypothèse
+de conception notée dans `codecs.py` ci-dessus (où l'écart PESQ/WER attendu venait du pré-écho AAC
+sous-pénalisé par une métrique de corrélation globale). Ici, sur de la vraie parole synthétisée et
+la vraie API Whisper, c'est **Opus** — le codec avec le meilleur SNR et le meilleur PESQ simplifié
+des trois — qui échoue totalement à l'intelligibilité réelle, pendant qu'AAC et GSM (métriques
+objectives moins bonnes) transcrivent parfaitement. Hypothèse non vérifiée plus avant ici : la
+distorsion harmonique cubique légère d'Opus (`_add_harmonic_distortion`), bien qu'à peine visible
+sur SNR/PESQ (corrélations globales insensibles à ce type d'artefact fin), semble suffire à faire
+dériver Whisper hors distribution (changement de langue détectée, hallucination partielle) — un
+exemple concret et mesuré de l'écart métrique-objective vs. intelligibilité réelle que le sujet
+demande d'analyser, obtenu ici sans avoir eu à le construire artificiellement.
 
 ---
 
