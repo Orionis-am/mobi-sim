@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import numpy as np
 import pytest
 
-from module_b import entities, pdu
+from module_b import entities, network_sim, pdu
 
 # --- entities ---------------------------------------------------------------
 
@@ -226,3 +227,107 @@ class TestDeliverPdu:
         original = pdu.DeliverPdu(originator="+33612345678", text="hi", timestamp=datetime(2026, 8, 29, 14, 5, 9))
         hex_pdu = pdu.encode_deliver_hex(original)
         assert pdu.decode_deliver_hex(hex_pdu) == original
+
+
+# --- network_sim ---------------------------------------------------------
+
+
+def _reachable_smsc(destination: str = "+15551234567") -> entities.Smsc:
+    hlr, vlr = entities.Hlr(), entities.Vlr()
+    hlr.register_ms(destination, imsi="001010000000001")
+    vlr.attach(destination, "LAC-1")
+    return entities.Smsc(entities.Msc(hlr, vlr))
+
+
+class TestSimulateDelivery:
+    def test_reachable_and_no_loss_delivers_on_first_attempt(self):
+        smsc = _reachable_smsc()
+        message = smsc.send("+15550000000", "+15551234567", "hi")
+        rng = np.random.default_rng(0)
+
+        outcome = network_sim.simulate_delivery(smsc, message, rng, loss_probability=0.0)
+
+        assert outcome.delivered is True
+        assert outcome.attempts == 1
+        assert message.status == entities.MessageStatus.DELIVERED
+
+    def test_unreachable_destination_expires_after_retry_window(self):
+        unreachable_smsc = entities.Smsc(entities.Msc(entities.Hlr(), entities.Vlr()))
+        message = unreachable_smsc.send("+15550000000", "+15551234567", "hi")
+        rng = np.random.default_rng(0)
+
+        outcome = network_sim.simulate_delivery(
+            unreachable_smsc, message, rng,
+            mean_delay_s=0.01, retry_backoff_s=1.0, backoff_factor=2.0, max_retry_window_s=5.0,
+        )
+
+        assert outcome.delivered is False
+        assert outcome.attempts > 1
+        assert outcome.delay_s > 5.0
+        assert message.status == entities.MessageStatus.UNDELIVERABLE
+
+    def test_seed_reproducibility(self):
+        def run():
+            smsc = _reachable_smsc()
+            message = smsc.send("+15550000000", "+15551234567", "hi")
+            return network_sim.simulate_delivery(smsc, message, np.random.default_rng(42))
+
+        a, b = run(), run()
+        assert a == b
+
+
+class TestSimulateBatchDelivery:
+    def test_always_reachable_and_no_loss_gives_full_delivery_on_first_attempt(self):
+        stats = network_sim.simulate_batch_delivery(20, reachable_probability=1.0, loss_probability=0.0, seed=0)
+        assert stats.delivery_rate == pytest.approx(1.0)
+        assert stats.mean_attempts == pytest.approx(1.0)
+
+    def test_never_reachable_gives_zero_delivery_rate(self):
+        stats = network_sim.simulate_batch_delivery(
+            5, reachable_probability=0.0, seed=0,
+            mean_delay_s=0.01, retry_backoff_s=1.0, backoff_factor=2.0, max_retry_window_s=5.0,
+        )
+        assert stats.delivery_rate == pytest.approx(0.0)
+
+    def test_seed_reproducibility(self):
+        a = network_sim.simulate_batch_delivery(10, reachable_probability=0.7, seed=7)
+        b = network_sim.simulate_batch_delivery(10, reachable_probability=0.7, seed=7)
+        assert a == b
+
+
+class TestSimulateOverload:
+    def test_light_load_has_negligible_loss(self):
+        result = network_sim.simulate_overload(
+            arrival_rate_msgs_per_s=5.0, duration_s=2.0, throughput_msgs_per_s=100.0, queue_capacity=500, seed=0,
+        )
+        assert result.loss_rate == pytest.approx(0.0)
+
+    def test_sustained_overload_causes_loss(self):
+        result = network_sim.simulate_overload(
+            arrival_rate_msgs_per_s=500.0, duration_s=2.0, throughput_msgs_per_s=50.0, queue_capacity=20, seed=0,
+        )
+        assert result.loss_rate > 0.0
+
+    def test_arrival_accounting_is_conserved(self):
+        result = network_sim.simulate_overload(
+            arrival_rate_msgs_per_s=80.0, duration_s=2.0, throughput_msgs_per_s=50.0, queue_capacity=30, seed=0,
+        )
+        assert result.n_delivered + result.n_dropped + result.n_still_queued == result.n_arrived
+
+    def test_seed_reproducibility(self):
+        kwargs = dict(arrival_rate_msgs_per_s=80.0, duration_s=2.0, throughput_msgs_per_s=50.0, queue_capacity=30, seed=3)
+        assert network_sim.simulate_overload(**kwargs) == network_sim.simulate_overload(**kwargs)
+
+
+class TestSweepOverload:
+    def test_returns_one_result_per_arrival_rate_in_order(self):
+        rates = [5.0, 50.0, 500.0]
+        results = network_sim.sweep_overload(rates, duration_s=1.0, throughput_msgs_per_s=50.0, queue_capacity=20, seed=0)
+        assert [r.arrival_rate_msgs_per_s for r in results] == rates
+
+    def test_heavy_load_loses_far_more_than_light_load(self):
+        results = network_sim.sweep_overload(
+            [5.0, 500.0], duration_s=2.0, throughput_msgs_per_s=50.0, queue_capacity=20, seed=0,
+        )
+        light, heavy = results
+        assert heavy.loss_rate > light.loss_rate

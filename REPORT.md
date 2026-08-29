@@ -480,6 +480,40 @@ durée de validité) :
 invalide) reste non couverte, laissée délibérément non déclenchée, même logique que pour
 `whisper_eval.py` en Module A. `entities.py` reste à 100 %.
 
+### `network_sim.py`
+
+**Choix** : toute la logique de délai/perte/retransmission vit ici, pas dans `entities.py`
+(`Smsc.deliver` reste une vérification synchrone de routabilité, sans notion de temps) :
+- `simulate_delivery(smsc, message, rng, ...)` — une tentative tire un délai (`rng.exponential
+  (mean_delay_s)`, plus réaliste qu'une loi normale pour un délai réseau/file d'attente, toujours
+  positif), puis échoue soit parce que `Msc.route` est faux (destinataire injoignable — téléphone
+  éteint, réévalué à chaque tentative), soit par perte transitoire indépendante
+  (`loss_probability`, réseau congestionné même si joignable). Backoff exponentiel
+  (`backoff_factor`) entre tentatives ; le message est déclaré définitivement indélivrable une fois
+  le temps cumulé au-delà de `max_retry_window_s` — **72h par défaut**, conforme au sujet.
+- `simulate_batch_delivery(n_messages, reachable_probability, ...)` — simule une population de
+  téléphones dont une fraction seulement est attachée au VLR (certains éteints), agrège taux de
+  livraison, délai moyen, nombre moyen de tentatives.
+- `simulate_overload(arrival_rate, duration_s, throughput_msgs_per_s, queue_capacity, ...)` — file
+  à un seul serveur en temps discret : arrivées de Poisson par pas de `1/throughput_msgs_per_s` s
+  (un message traité par pas), rejet immédiat si la file dépasse `queue_capacity`. Mesure
+  directement ce que demande le sujet : taux de perte et délai moyen sous charge soutenue
+  (« centaines de SMS/s »).
+- `sweep_overload(arrival_rates, ...)` — le point précédent répété sur plusieurs charges, pour
+  produire directement les données des courbes QoS-vs-charge du rapport (une seed dérivée par
+  point, pour rester reproductible sans partager le même bruit d'échantillonnage entre points —
+  même idée que `mushra_sim.simulate_mushra_panel` en Module A).
+
+**Pourquoi Poisson + serveur à débit fixe plutôt qu'un modèle plus élaboré** : suffisant pour
+démontrer la dégradation QoS demandée (perte + délai croissants avec la charge) sans complexité
+supplémentaire non justifiée par le sujet — cohérent avec l'esprit « simulation, pas modélisation
+réseau certifiée » déjà adopté pour `codecs.py` en Module A.
+
+**Résultats de test** : 12 nouveaux tests (55 au total), tous verts, y compris un test de
+conservation explicite (`n_delivered + n_dropped + n_still_queued == n_arrived`) et des tests de
+reproductibilité par seed pour les trois fonctions stochastiques. Couverture `network_sim.py` :
+**100 %** (`module_b` global : 99 %).
+
 ---
 
 ## En attente / pas encore implémenté
