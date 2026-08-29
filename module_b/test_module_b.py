@@ -13,7 +13,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from module_b import entities, network_sim, pdu
+from module_b import entities, network_sim, pdu, twilio_client
 
 # --- entities ---------------------------------------------------------------
 
@@ -331,3 +331,111 @@ class TestSweepOverload:
         )
         light, heavy = results
         assert heavy.loss_rate > light.loss_rate
+
+
+# --- twilio_client -------------------------------------------------------
+
+
+class FakeTwilioMessage:
+    def __init__(self, sid, status, to, from_, body):
+        self.sid = sid
+        self.status = status
+        self.to = to
+        self.from_ = from_
+        self.body = body
+        self.date_created = None
+        self.date_updated = None
+        self.error_code = None
+
+
+class FakeMessageContext:
+    def __init__(self, message: FakeTwilioMessage):
+        self._message = message
+
+    def fetch(self) -> FakeTwilioMessage:
+        return self._message
+
+
+class FakeMessagesResource:
+    def __init__(self):
+        self._messages: dict[str, FakeTwilioMessage] = {}
+        self._next_id = 1
+        self.create_calls: list[dict] = []
+
+    def create(self, to: str, from_: str, body: str) -> FakeTwilioMessage:
+        sid = f"SM{self._next_id:032d}"
+        self._next_id += 1
+        message = FakeTwilioMessage(sid=sid, status="queued", to=to, from_=from_, body=body)
+        self._messages[sid] = message
+        self.create_calls.append({"to": to, "from_": from_, "body": body})
+        return message
+
+    def __call__(self, sid: str) -> FakeMessageContext:
+        return FakeMessageContext(self._messages[sid])
+
+
+class FakeTwilioClient:
+    def __init__(self):
+        self.messages = FakeMessagesResource()
+
+
+class TestSendSms:
+    def test_sends_with_explicit_sender_and_returns_result(self):
+        client = FakeTwilioClient()
+        result = twilio_client.send_sms("+15551234567", "hello", from_="+15550000000", client=client)
+
+        assert result.status == "queued"
+        assert result.to == "+15551234567"
+        assert result.from_ == "+15550000000"
+        assert client.messages.create_calls == [{"to": "+15551234567", "from_": "+15550000000", "body": "hello"}]
+
+    def test_falls_back_to_env_sender(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_PHONE_NUMBER", "+15559999999")
+        client = FakeTwilioClient()
+        twilio_client.send_sms("+15551234567", "hi", client=client)
+        assert client.messages.create_calls[0]["from_"] == "+15559999999"
+
+    def test_missing_sender_raises(self, monkeypatch):
+        monkeypatch.delenv("TWILIO_PHONE_NUMBER", raising=False)
+        with pytest.raises(RuntimeError):
+            twilio_client.send_sms("+15551234567", "hi", client=FakeTwilioClient())
+
+
+class TestGetDeliveryStatus:
+    def test_returns_status_from_fetch(self):
+        client = FakeTwilioClient()
+        sent = twilio_client.send_sms("+15551234567", "hi", from_="+15550000000", client=client)
+        client.messages._messages[sent.sid].status = "delivered"
+
+        status = twilio_client.get_delivery_status(sent.sid, client=client)
+        assert status.sid == sent.sid
+        assert status.status == "delivered"
+
+
+class TestClient:
+    def test_missing_credentials_raises(self, monkeypatch):
+        monkeypatch.delenv("TWILIO_ACCOUNT_SID", raising=False)
+        monkeypatch.delenv("TWILIO_AUTH_TOKEN", raising=False)
+        with pytest.raises(RuntimeError):
+            twilio_client._client()
+
+    def test_built_from_env_vars_when_present(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACtestsid")
+        monkeypatch.setenv("TWILIO_AUTH_TOKEN", "testtoken")
+        client = twilio_client._client()
+        assert client.username == "ACtestsid"
+        assert client.password == "testtoken"
+
+
+class TestHandleStatusWebhook:
+    def test_parses_delivered_payload(self):
+        payload = {"MessageSid": "SM123", "MessageStatus": "delivered", "To": "+15551234567", "From": "+15550000000"}
+        status = twilio_client.handle_status_webhook(payload)
+        assert status.sid == "SM123"
+        assert status.status == "delivered"
+        assert status.error_code is None
+
+    def test_parses_error_code_as_int(self):
+        payload = {"MessageSid": "SM123", "MessageStatus": "failed", "ErrorCode": "30006"}
+        status = twilio_client.handle_status_webhook(payload)
+        assert status.error_code == 30006

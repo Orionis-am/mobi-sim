@@ -514,6 +514,40 @@ conservation explicite (`n_delivered + n_dropped + n_still_queued == n_arrived`)
 reproductibilité par seed pour les trois fonctions stochastiques. Couverture `network_sim.py` :
 **100 %** (`module_b` global : 99 %).
 
+### `twilio_client.py`
+
+**Choix** : trois fonctions publiques, sans aucune dépendance FastAPI/Flask — délibérément, la
+route `POST /twilio/webhook` appartient au Module E (pas encore construit, cf. `docs/SUJET.md` §3
+MOD-E et §5 phase 6), pas au Module B :
+- `send_sms(to, body, from_=None, client=None)` — enveloppe `client.messages.create(...)` du SDK
+  `twilio-python` ; `from_` retombe sur `TWILIO_PHONE_NUMBER` si non fourni.
+- `get_delivery_status(sid, client=None)` — enveloppe `client.messages(sid).fetch()`, l'alternative
+  « polling » que le sujet propose au webhook.
+- `handle_status_webhook(payload: dict) -> SmsStatus` — fonction pure qui normalise les champs du
+  callback Twilio (`MessageSid`, `MessageStatus`, `ErrorCode`) en `SmsStatus`, prête à être appelée
+  depuis la future route FastAPI du Module E sans que ce fichier-ci ne sache ce qu'est FastAPI.
+
+`client` est injectable partout, même schéma que `whisper_eval.transcribe` en Module A. Ajout de
+`twilio` aux dépendances via `uv add twilio`.
+
+**`manual_twilio_check.py`** : script manuel non exécuté par pytest (envoie un vrai SMS via le
+trial Twilio), même schéma que `module_a/manual_whisper_check.py` — voir sa docstring pour le
+raisonnement. Nécessite `TWILIO_TEST_TO_NUMBER` (numéro destinataire vérifié de l'étudiant),
+**absent de la liste `docs/SUJET.md` §6.2** (qui ne liste que `TWILIO_PHONE_NUMBER`, l'expéditeur
+trial) — ajouté à `.env.example` car un envoi réel a structurellement besoin de distinguer
+expéditeur et destinataire, omission du sujet plutôt qu'un choix de conception.
+
+**Tests** : un `FakeTwilioClient`/`FakeMessagesResource`/`FakeMessageContext` reproduisant la forme
+exacte du SDK réel (`client.messages.create(...)` et `client.messages(sid).fetch()` — `messages`
+est à la fois appelable et pourvu de `.create`, comme le vrai SDK), même approche que le
+`FakeClient` OpenAI du Module A plutôt qu'une bibliothèque de mock. Pas de test d'intégration
+réseau — `manual_twilio_check.py` couvre ça, à la demande seulement.
+
+**Résultats de test** : 8 nouveaux tests (63 au total), tous verts. Couverture `twilio_client.py` :
+**100 %** ; `manual_twilio_check.py` à 0 % (jamais exécuté par pytest, comme
+`manual_whisper_check.py` en Module A — n'affecte pas le seuil global du projet, 95 % tous modules
+confondus).
+
 ---
 
 ## En attente / pas encore implémenté
