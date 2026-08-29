@@ -13,7 +13,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from module_b import compare, entities, network_sim, pdu, twilio_client
+from module_b import compare, entities, fitness, network_sim, pdu, twilio_client
 
 # --- entities ---------------------------------------------------------------
 
@@ -519,3 +519,55 @@ class TestBuildComparisonTable:
 
         assert table["simulated"] == {"mean_delay_s": 3.0, "delivery_rate": 0.9}
         assert table["real"] == {"mean_accept_latency_s": 0.4, "mean_delivery_latency_s": 6.0, "delivery_rate": 1.0, "n_samples": 5}
+
+
+# --- fitness ---------------------------------------------------------------
+
+
+class TestDecodeChromosome:
+    def test_snaps_to_nearest_discrete_choices(self):
+        config = fitness.decode_chromosome([7.0, 2.0, 20.0])
+        assert config.retry_backoff_s == 5.0
+        assert config.max_retry_window_hours == 24.0
+
+    def test_backoff_factor_is_clipped_to_bounds(self):
+        assert fitness.decode_chromosome([30.0, 10.0, 24.0]).backoff_factor == 3.0
+        assert fitness.decode_chromosome([30.0, 0.0, 24.0]).backoff_factor == 1.0
+
+    def test_wrong_length_chromosome_raises(self):
+        with pytest.raises(ValueError):
+            fitness.decode_chromosome([30.0, 2.0])
+
+
+class TestRoutingFitnessComponents:
+    def test_returns_expected_keys(self):
+        result = fitness.routing_fitness_components([30.0, 2.0, 24.0], n_messages=20, seed=0)
+        assert set(result) == {
+            "retry_backoff_s", "backoff_factor", "max_retry_window_hours",
+            "delivery_rate", "mean_delay_s", "mean_attempts", "constraint_violation", "fitness",
+        }
+        assert np.isfinite(result["fitness"])
+
+    def test_seed_reproducibility(self):
+        a = fitness.routing_fitness_components([30.0, 2.0, 24.0], n_messages=20, seed=0)
+        b = fitness.routing_fitness_components([30.0, 2.0, 24.0], n_messages=20, seed=0)
+        assert a == b
+
+    def test_min_delivery_rate_constraint_penalizes_fitness(self):
+        chromosome = [30.0, 2.0, 24.0]
+        uncapped = fitness.routing_fitness_components(chromosome, n_messages=30, reachable_probability=0.5, seed=0)
+        capped = fitness.routing_fitness_components(
+            chromosome, n_messages=30, reachable_probability=0.5, seed=0,
+            min_delivery_rate=1.0, constraint_penalty_weight=2.0,
+        )
+        expected_violation = 1.0 - uncapped["delivery_rate"]
+        assert capped["constraint_violation"] == pytest.approx(expected_violation)
+        assert capped["fitness"] == pytest.approx(uncapped["fitness"] - 2.0 * expected_violation)
+
+
+class TestRoutingFitness:
+    def test_matches_components_fitness_value(self):
+        chromosome = [30.0, 2.0, 24.0]
+        value = fitness.routing_fitness(chromosome, n_messages=20, seed=0)
+        expected = fitness.routing_fitness_components(chromosome, n_messages=20, seed=0)["fitness"]
+        assert value == pytest.approx(expected)

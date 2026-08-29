@@ -572,10 +572,52 @@ factice (`sleep()` avance le temps simulé et fait progresser le statut du messa
 aucune vraie attente) couvrant à la fois le cas « livré après un poll » et le cas « timeout sans
 statut terminal ». Couverture `compare.py` : **100 %**.
 
+### `fitness.py`
+
+**Contexte — écart avec le sujet à noter explicitement** : `docs/SUJET.md` §3 MOD-B demande
+`routing_fitness(chromosome) → latence simulée, utilisée par le Module F`, mais contrairement au
+Pb1 de Module A (config codec, explicitement câblé dans §3 MOD-F), **aucun problème du Module F
+(§3 MOD-F : Pb1 codec/A, Pb2 placement BTS/C, Pb3 QoS/D) n'utilise `routing_fitness`**. Cette
+fonction est donc construite au même niveau d'exigence de stabilité de contrat que `codec_fitness`
+(CLAUDE.md : « garder la signature stable une fois que Module F en dépend »), mais sans qu'aucun
+livrable noté du Module F ne l'appelle concrètement — écart du sujet documenté ici plutôt que
+laissé implicite ou maquillé.
+
+**Chromosome — design propre à ce module, faute de définition dans le sujet** :
+`[retry_backoff_s, backoff_factor, max_retry_window_hours]`, la politique de retransmission que
+`network_sim.simulate_delivery` applique. Compromis qu'un AG doit pouvoir découvrir : un backoff
+court réduit le délai des messages qui finissent par réussir mais multiplie les tentatives (charge
+SMSC) ; une fenêtre de réessai courte libère les ressources plus vite mais abandonne plus tôt des
+destinataires joignables-mais-lents, réduisant le taux de livraison. `decode_chromosome` reprend
+exactement le style tolérant de `module_a.fitness.decode_chromosome` (valeurs discrètes ramenées au
+choix valide le plus proche, gène continu (`backoff_factor`) borné par clip).
+
+**`routing_fitness_components`** : simule un lot (`network_sim.simulate_batch_delivery`) et calcule
+`fitness = w1·taux_livraison − w2·(délai_moyen/normalisation) − w3·(tentatives_moyennes/normalisation)`,
+plus une pénalité de contrainte optionnelle (`min_delivery_rate`) — même schéma que la pénalité de
+plafond de bitrate en Module A.
+
+**Différence notable avec `codec_fitness`, à documenter** : pas de cache module-level équivalent à
+`_get_reference_signal`. `codec_fitness` en avait besoin car générer le signal de référence est un
+appel réseau (gTTS) coûteux à répéter des milliers de fois ; ici, `network_sim.simulate_batch_delivery`
+est du Python/NumPy pur et bon marché — `routing_fitness` est donc un simple wrapper direct sur
+`routing_fitness_components`, sans état partagé entre appels. Même défaut `seed=None` que
+`codec_fitness` par cohérence : la reproductibilité entre appels reste la responsabilité de
+l'appelant (Module F), pas fixée ici.
+
+**Résultats de test** : 7 nouveaux tests (75 au total pour `module_b`), tous verts. Couverture
+`fitness.py` : **100 %**. Couverture globale `module_b` : **98 %** (seuls
+`pdu.gsm7_decode`'s branche d'erreur et `manual_twilio_check.py`, jamais exercé par pytest par
+conception, restent non couverts).
+
 ---
 
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
-Module B en cours (`entities.py` fait ; `pdu.py`, `network_sim.py`, `twilio_client.py`,
-`compare.py`, `fitness.py` à venir). Modules C–F, non commencés.
+Module B est complet côté code (tous les fichiers de `docs/SUJET.md` §3 implémentés et testés, 98 %
+de couverture) — reste en attente : un envoi SMS réel via `manual_twilio_check.py` (script prêt,
+pas encore exécuté, nécessite confirmation explicite avant tout envoi réel — cf. précédent
+`manual_whisper_check.py` en Module A) pour peupler `compare.py` avec un vrai échantillon
+`RealDeliverySample` et documenter la comparaison sim/réel dans le rapport final (§8 Q2). Modules
+C–F, non commencés.
