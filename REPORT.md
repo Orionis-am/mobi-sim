@@ -384,7 +384,31 @@ demande d'analyser, obtenu ici sans avoir eu à le construire artificiellement.
 
 ---
 
+## Module B — SMS hybride (SMSC/HLR/VLR/MSC simulés + Twilio réel)
+
+### `entities.py`
+
+**Choix** : quatre classes d'état pur — `Hlr`, `Vlr`, `Msc`, `Smsc` — reflétant l'architecture GSM
+réelle, sans aucune logique de délai/perte/retransmission (ça, c'est le rôle de `network_sim.py` à
+venir ; même séparation que `codecs.py`/`fitness.py` en Module A) :
+- `Hlr.register_ms(msisdn, imsi)` / `query_hlr(msisdn)` — base d'abonnés permanente.
+- `Vlr.attach(msisdn, location_area)` / `is_attached` / `location_of` / `detach` — présence
+  courante sur le réseau, distincte de l'abonnement HLR.
+- `Msc.route(msisdn)` — un abonné n'est joignable que s'il est **à la fois** connu du HLR **et**
+  actuellement attaché au VLR ; modélise la vraie distinction GSM entre « a un abonnement » et
+  « le téléphone est actuellement allumé et enregistré ».
+- `Smsc.send(...)` met en file (`MessageStatus.QUEUED`, id auto-incrémenté) ; `Smsc.deliver(message)`
+  fait une tentative de livraison synchrone via `Msc.route`, met à jour le statut
+  (`DELIVERED`/`UNDELIVERABLE`) et retourne un bool. Une seule tentative, sans notion de temps —
+  `network_sim.py` empilera délai/perte/retransmission par-dessus.
+
+**Résultats de test** : 11 tests, tous verts (registration HLR, cycle attach/detach VLR, les 4
+combinaisons de routabilité MSC, et les deux chemins de `Smsc.deliver`).
+
+---
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
-Modules B–F, non commencés.
+Module B en cours (`entities.py` fait ; `pdu.py`, `network_sim.py`, `twilio_client.py`,
+`compare.py`, `fitness.py` à venir). Modules C–F, non commencés.
