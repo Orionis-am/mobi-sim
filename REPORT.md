@@ -909,6 +909,38 @@ niveau de bruit dans `sweep_noise` et sa reproductibilité.
 **Résultats de test** : 12 nouveaux tests (47 au total pour `module_c`), tous verts. Couverture
 `wifi_fp.py` : **100 %**.
 
+### `ipinfo_client.py`
+
+**Choix** : une seule fonction, `locate_ip(ip=None, token=None, session=None, timeout_s=5.0)` —
+enveloppe `GET https://ipinfo.io/{ip}/json` (ou `.../json` sans IP pour la propre IP publique de
+l'appelant). `session` injectable comme `client` dans `twilio_client.py` — sans injection, utilise
+directement le module `requests` (son `requests.get` a la même signature qu'une session, donc pas
+besoin de créer une session par défaut). ipinfo.io renvoie les coordonnées comme une seule chaîne
+`"lat,lon"` (`_parse_loc`), et omet parfois le champ `loc` entièrement (IP dont la géoloc est
+inconnue) — `lat`/`lon` valent alors `None` plutôt que de lever une exception.
+
+**Discussion granularité/usages légitimes** (spec ligne 197, à développer dans le rapport final) :
+la géoloc IP est précise au mieux à l'échelle de la ville, parfois seulement de la région/pays —
+largement insuffisant pour localiser une personne précisément, ce qui limite les usages légitimes à
+la personnalisation grossière de contenu, la détection de fraude, ou les analytics agrégées, pas le
+tracking individuel.
+
+**Tests** : `FakeIpinfoSession`/`FakeIpinfoResponse` reproduisant la forme de `requests.Session`
+(`.get(url, params, timeout)` → objet avec `.raise_for_status()`/`.json()`), même principe que
+`FakeTwilioClient` en Module B. Réponse complète, IP propre par défaut, IP explicite dans l'URL,
+champ `loc` absent, jeton manquant lève une erreur, jeton explicite prioritaire sur l'environnement,
+statut HTTP d'erreur propage `requests.HTTPError`.
+
+**`manual_ipinfo_check.py`** : script manuel non exécuté par pytest, même schéma que
+`manual_twilio_check.py`/`manual_nominatim_check.py` (à venir). **Pas encore exécutable pour de
+vrai** : `IPINFO_TOKEN` dans `.env` est toujours la valeur de remplissage `xxxxxxxxxx`, pas un
+jeton réel — même situation que Twilio avant la dernière session de travail. En attente que
+l'utilisateur crée un compte gratuit sur ipinfo.io.
+
+**Résultats de test** : 7 nouveaux tests (54 au total pour `module_c`), tous verts. Couverture
+`ipinfo_client.py` : **100 %** ; `manual_ipinfo_check.py` à 0 % par conception (jamais exercé par
+pytest).
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -922,6 +954,8 @@ dans les sections « Complément » de `twilio_client.py` ci-dessus. `compare.py
 d'un vrai `RealDeliverySample` pour la comparaison sim/réel du rapport final (§8 Q2), qui pourra
 aussi s'appuyer sur les deux contraintes trial découvertes au passage (politique de template SMS,
 `GET /Messages/{Sid}` 403 alors que `GET /Messages` fonctionne) comme causes structurelles de
-l'écart. Rien ne reste en attente pour Module B. Module C en cours (`opencellid_loader.py` fait,
-reste `terrain_sim.py`, `cell_id.py`, `toa.py`, `wifi_fp.py`, `ipinfo_client.py`, `lbs_poi.py`,
-`map_viz.py`, `fitness.py`). Modules D–F, non commencés.
+l'écart. Rien ne reste en attente pour Module B. Module C en cours
+(`opencellid_loader.py`/`terrain_sim.py`/`cell_id.py`/`toa.py`/`wifi_fp.py`/`ipinfo_client.py`
+faits, reste `lbs_poi.py`, `map_viz.py`, `fitness.py`) — `manual_ipinfo_check.py` est prêt mais en
+attente d'un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de remplissage
+`xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Modules D–F, non commencés.

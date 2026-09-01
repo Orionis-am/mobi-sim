@@ -12,8 +12,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
-from module_c import cell_id, opencellid_loader, terrain_sim, toa, wifi_fp
+from module_c import cell_id, ipinfo_client, opencellid_loader, terrain_sim, toa, wifi_fp
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -380,3 +381,79 @@ class TestSweepNoise:
         a = wifi_fp.sweep_noise(_large_square_terrain(), [0.0, 10.0], n_positions=10, seed=3)
         b = wifi_fp.sweep_noise(_large_square_terrain(), [0.0, 10.0], n_positions=10, seed=3)
         assert [r["median_error_m"] for r in a] == [r["median_error_m"] for r in b]
+
+
+# --- ipinfo_client -----------------------------------------------------------
+
+
+class FakeIpinfoResponse:
+    def __init__(self, json_data, status_code=200):
+        self._json_data = json_data
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error")
+
+    def json(self):
+        return self._json_data
+
+
+class FakeIpinfoSession:
+    def __init__(self, json_data=None, status_code=200):
+        self._json_data = json_data or {}
+        self.status_code = status_code
+        self.get_calls: list[dict] = []
+
+    def get(self, url, params=None, timeout=None):
+        self.get_calls.append({"url": url, "params": params, "timeout": timeout})
+        return FakeIpinfoResponse(self._json_data, self.status_code)
+
+
+class TestLocateIp:
+    def test_parses_full_response(self, monkeypatch):
+        monkeypatch.setenv("IPINFO_TOKEN", "test-token")
+        session = FakeIpinfoSession({"ip": "8.8.8.8", "city": "Mountain View", "region": "California", "country": "US", "loc": "37.4056,-122.0775"})
+        location = ipinfo_client.locate_ip("8.8.8.8", session=session)
+        assert location.ip == "8.8.8.8"
+        assert location.city == "Mountain View"
+        assert location.region == "California"
+        assert location.country == "US"
+        assert location.lat == pytest.approx(37.4056)
+        assert location.lon == pytest.approx(-122.0775)
+
+    def test_own_ip_when_none_given(self, monkeypatch):
+        monkeypatch.setenv("IPINFO_TOKEN", "test-token")
+        session = FakeIpinfoSession({"ip": "1.2.3.4", "loc": "48.85,2.35"})
+        ipinfo_client.locate_ip(session=session)
+        assert session.get_calls[0]["url"] == "https://ipinfo.io/json"
+
+    def test_specific_ip_included_in_url(self, monkeypatch):
+        monkeypatch.setenv("IPINFO_TOKEN", "test-token")
+        session = FakeIpinfoSession({"ip": "8.8.8.8", "loc": "37.0,-122.0"})
+        ipinfo_client.locate_ip("8.8.8.8", session=session)
+        assert session.get_calls[0]["url"] == "https://ipinfo.io/8.8.8.8/json"
+
+    def test_missing_loc_field_yields_none_coordinates(self, monkeypatch):
+        monkeypatch.setenv("IPINFO_TOKEN", "test-token")
+        session = FakeIpinfoSession({"ip": "8.8.8.8", "city": "Mountain View"})
+        location = ipinfo_client.locate_ip("8.8.8.8", session=session)
+        assert location.lat is None
+        assert location.lon is None
+
+    def test_missing_token_raises(self, monkeypatch):
+        monkeypatch.delenv("IPINFO_TOKEN", raising=False)
+        with pytest.raises(RuntimeError):
+            ipinfo_client.locate_ip("8.8.8.8", session=FakeIpinfoSession({}))
+
+    def test_explicit_token_bypasses_env(self, monkeypatch):
+        monkeypatch.delenv("IPINFO_TOKEN", raising=False)
+        session = FakeIpinfoSession({"ip": "8.8.8.8", "loc": "1.0,2.0"})
+        ipinfo_client.locate_ip("8.8.8.8", token="explicit-token", session=session)
+        assert session.get_calls[0]["params"]["token"] == "explicit-token"
+
+    def test_http_error_status_raises(self, monkeypatch):
+        monkeypatch.setenv("IPINFO_TOKEN", "test-token")
+        session = FakeIpinfoSession({}, status_code=403)
+        with pytest.raises(requests.HTTPError):
+            ipinfo_client.locate_ip("8.8.8.8", session=session)
