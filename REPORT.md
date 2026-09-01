@@ -589,6 +589,21 @@ rester utilisable depuis un terminal piloté par un agent aussi bien qu'à la ma
 même principe de forme-exacte-du-SDK que les fakes Messages. 5 nouveaux tests (68 au total),
 tous verts. Couverture `twilio_client.py` : toujours **100 %**.
 
+**Résultat de l'envoi réel** : `manual_twilio_verify_check.py` exécuté sans argument le
+2026-09-01 — un vrai SMS OTP envoyé par l'API Verify à `TWILIO_TEST_TO_NUMBER`
+(`sid=VEadbbe2122442b62843f6f85a2831fbf3`, `status=pending` à l'acceptation). Reçu sur le
+téléphone réel de l'étudiant, le code a été renvoyé au script (second appel avec l'argument
+`<code>`), qui a retourné `status=approved`, `valid=True` auprès de l'API Verify réelle —
+aller-retour complet (envoi → réception humaine → vérification) réussi sur le compte trial,
+là où l'envoi SMS libre via `messages.create` reste bloqué (cf. ci-dessus). Contrairement à
+`compare.measure_real_delivery` (spécifique à l'API Messages), le script Verify ne chronomètre
+pas de latence — l'objectif ici était de prouver qu'un envoi/réception réel fonctionne de bout en
+bout sur ce compte, pas de peupler `compare.py`, dont les métriques (`accept_latency_s`,
+`delivery_latency_s`) resteraient de toute façon non représentatives d'un flux Verify. Le SMS-vs-
+Verify est lui-même une donnée pour §8 Q2 : le trial Twilio autorise l'authentification (OTP,
+alertes système) mais pas la messagerie de contenu libre, une segmentation anti-spam qui n'existe
+pas dans le simulateur.
+
 ### `compare.py`
 
 **Choix** : trois fonctions, aucune ne code en dur les causes de l'écart sim/réel — c'est la
@@ -673,10 +688,12 @@ fichiers non couverts du module.
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
 Module B est complet côté code et tests (tous les fichiers de `docs/SUJET.md` §3 implémentés et
 testés, 96 % de couverture — 100 % hors les deux scripts manuels `manual_twilio_check.py`/
-`manual_twilio_verify_check.py`, non exercés par pytest par conception) — reste en attente : un
-envoi SMS réel (script `manual_twilio_check.py` prêt mais bloqué par la politique de template SMS
-des comptes trial — erreur Twilio 60409, voir la section « Complément » de `twilio_client.py` —,
-ou son détour `manual_twilio_verify_check.py` via l'API Verify, pas encore exécuté, nécessite
-confirmation explicite avant tout envoi réel — cf. précédent `manual_whisper_check.py` en Module A)
-pour peupler `compare.py` avec un vrai échantillon `RealDeliverySample` et documenter la
-comparaison sim/réel dans le rapport final (§8 Q2). Modules C–F, non commencés.
+`manual_twilio_verify_check.py`, non exercés par pytest par conception) et a maintenant un envoi
+réel réussi : `manual_twilio_verify_check.py` a envoyé un vrai OTP via l'API Verify, reçu et
+vérifié avec succès (`status=approved`) — voir « Résultat de l'envoi réel » dans la section
+`twilio_client.py` ci-dessus. Reste en attente, non bloquant : `manual_twilio_check.py`
+(messagerie libre via `messages.create`) reste inexécutable tel quel sur ce compte trial (erreur
+Twilio 60409, politique de template — cf. « Complément » ci-dessus) et `compare.py` n'a donc pas
+été peuplé d'un `RealDeliverySample` issu de l'API Messages ; la comparaison sim/réel pour le
+rapport final (§8 Q2) s'appuiera sur l'écart de politique lui-même (SMS libre vs. OTP) plutôt que
+sur une comparaison de latences Messages API. Modules C–F, non commencés.
