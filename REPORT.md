@@ -476,9 +476,10 @@ durée de validité) :
 | `C8 34` | TP-UD | `"Hi"` empaqueté — valeur vérifiée à la main ci-dessus |
 
 **Résultats de test** : 32 nouveaux tests (43 au total pour `module_b`), tous verts. Couverture
-`pdu.py` : 99 % ; seule `gsm7_decode`'s branche d'erreur (`KeyError→ValueError` sur un septet
-invalide) reste non couverte, laissée délibérément non déclenchée, même logique que pour
-`whisper_eval.py` en Module A. `entities.py` reste à 100 %.
+`pdu.py` : 99 % à l'origine ; seule `gsm7_decode`'s branche d'erreur (`KeyError→ValueError` sur un
+septet invalide) restait non couverte — comblée ensuite par
+`test_decode_unsupported_septet_raises` (voir plus bas, « Complément — couverture de
+`gsm7_decode` »), portant `pdu.py` à 100 %. `entities.py` reste à 100 %.
 
 ### `network_sim.py`
 
@@ -606,17 +607,31 @@ est du Python/NumPy pur et bon marché — `routing_fitness` est donc un simple 
 l'appelant (Module F), pas fixée ici.
 
 **Résultats de test** : 7 nouveaux tests (75 au total pour `module_b`), tous verts. Couverture
-`fitness.py` : **100 %**. Couverture globale `module_b` : **98 %** (seuls
+`fitness.py` : **100 %**. Couverture globale `module_b` à ce stade : **98 %** (seuls
 `pdu.gsm7_decode`'s branche d'erreur et `manual_twilio_check.py`, jamais exercé par pytest par
-conception, restent non couverts).
+conception, restaient non couverts).
+
+### Complément — couverture de `gsm7_decode`
+
+**Choix** : dernier écart de couverture identifié dans `module_b` — `gsm7_decode` (pdu.py) lève
+`ValueError` sur un septet hors table (`KeyError` intercepté), mais seule la branche symétrique de
+`gsm7_encode` était testée (`test_unsupported_character_raises`). Ajout de
+`test_decode_unsupported_septet_raises`, qui vérifie que décoder `[0x1B]` (le code d'échappement de
+la table d'extension, explicitement absent de `_GSM7_CHARS`) lève bien `ValueError`.
+
+**Résultats de test** : 1 nouveau test (76 au total pour `module_b`), tous verts. Couverture
+`pdu.py` : **100 %**. Couverture globale `module_b` : **98 %**, `manual_twilio_check.py` restant à
+0 % par conception (script manuel, jamais exercé par pytest) — c'est désormais la seule ligne non
+couverte du module.
 
 ---
 
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
-Module B est complet côté code (tous les fichiers de `docs/SUJET.md` §3 implémentés et testés, 98 %
-de couverture) — reste en attente : un envoi SMS réel via `manual_twilio_check.py` (script prêt,
+Module B est complet côté code et tests (tous les fichiers de `docs/SUJET.md` §3 implémentés et
+testés, 98 % de couverture — 100 % hors `manual_twilio_check.py`, non exercé par pytest par
+conception) — reste en attente : un envoi SMS réel via `manual_twilio_check.py` (script prêt,
 pas encore exécuté, nécessite confirmation explicite avant tout envoi réel — cf. précédent
 `manual_whisper_check.py` en Module A) pour peupler `compare.py` avec un vrai échantillon
 `RealDeliverySample` et documenter la comparaison sim/réel dans le rapport final (§8 Q2). Modules

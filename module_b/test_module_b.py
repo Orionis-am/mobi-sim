@@ -124,6 +124,12 @@ class TestGsm7Alphabet:
         # index 0x00 is '@', unlike ASCII's NUL.
         assert pdu.gsm7_encode("@") == [0x00]
 
+    def test_decode_unsupported_septet_raises(self):
+        # 0x1B is the extension-table escape code, deliberately excluded
+        # from _GSM7_CHARS (see pdu.py's module docstring).
+        with pytest.raises(ValueError):
+            pdu.gsm7_decode([0x1B])
+
 
 class TestSeptetPacking:
     def test_two_septets_pack_as_hand_computed(self):
