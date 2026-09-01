@@ -727,6 +727,43 @@ pytest) — ce sont désormais les deux seuls fichiers non couverts du module.
 
 ---
 
+## Module C — Géolocalisation LBS (OpenCelliD + Nominatim + cartes Folium)
+
+### `opencellid_loader.py`
+
+**Choix** : le sujet recommande explicitement le mode offline (dump CSV complet) plutôt que l'API
+live d'OpenCelliD (quota 1000 req/jour) pour éliminer toute contrainte de quota — l'utilisateur a
+déjà téléchargé le dump France (MCC=208) dans `docs/208.csv` (392 420 lignes, sans en-tête). Deux
+fonctions seulement :
+- `load_opencellid_csv(csv_path, mcc=208, use_cache=True)` — charge le CSV en DataFrame pandas
+  avec des colonnes nommées explicitement (`COLUMNS`), filtre optionnel par MCC. Mise en cache
+  mémoire par `(csv_path, mcc)`, même principe que `_reference_cache` de `module_a/fitness.py`
+  (pas un nouveau format de cache disque type parquet) — évite de reparser 392k lignes à chaque
+  appel dans un même run. Chaque appel retourne une copie (`.copy()`) pour qu'une mutation côté
+  appelant ne corrompe pas le cache.
+- `sample_bts(df, bbox, n=1000, seed=None)` — filtre par bounding box puis échantillonne sans
+  remise jusqu'à `n` lignes ; si la zone contient moins de `n` BTS, retourne tout ce qu'il y a
+  plutôt que de lever une exception (une démo construite sur ce qui existe vaut mieux qu'un crash
+  au démarrage).
+
+**Piège documenté explicitement** : le schéma public OpenCelliD liste `lon` avant `lat` — bug
+classique si on suppose l'ordre inverse. `COLUMNS` le nomme sans ambiguïté et un test dédié
+(`test_lon_before_lat_column_order`) vérifie l'ordre sur des données connues.
+
+**Région cible — Rodez / Aveyron (département 12)** : choisi avec l'utilisateur plutôt que
+Nice/Paris (qui se trouvent être les premières lignes du fichier). Vérifié que la zone
+`lon∈[1.5,3.5], lat∈[43.8,44.9]` contient réellement 6 815 BTS dans le dump — largement au-dessus
+de la cible du sujet (500-2000 BTS), donc `sample_bts` échantillonne depuis une population réelle
+non triviale plutôt que de racler le minimum.
+
+**Tests** : CSV synthétique à 5 lignes (`tmp_path`, pas le vrai `docs/208.csv` — trop volumineux
+pour des tests unitaires rapides), couvrant filtrage MCC, ordre lon/lat, indépendance des copies
+issues du cache, filtrage bbox, plafonnement sans exception, et reproductibilité par seed. Vérifié
+séparément (hors suite pytest) que `load_opencellid_csv()` + `sample_bts(n=1000, seed=42)` sur le
+vrai `docs/208.csv` retourne bien 1000 BTS réelles en Aveyron.
+
+**Résultats de test** : 7 tests, tous verts. Couverture `opencellid_loader.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -740,4 +777,6 @@ dans les sections « Complément » de `twilio_client.py` ci-dessus. `compare.py
 d'un vrai `RealDeliverySample` pour la comparaison sim/réel du rapport final (§8 Q2), qui pourra
 aussi s'appuyer sur les deux contraintes trial découvertes au passage (politique de template SMS,
 `GET /Messages/{Sid}` 403 alors que `GET /Messages` fonctionne) comme causes structurelles de
-l'écart. Rien ne reste en attente pour Module B. Modules C–F, non commencés.
+l'écart. Rien ne reste en attente pour Module B. Module C en cours (`opencellid_loader.py` fait,
+reste `terrain_sim.py`, `cell_id.py`, `toa.py`, `wifi_fp.py`, `ipinfo_client.py`, `lbs_poi.py`,
+`map_viz.py`, `fitness.py`). Modules D–F, non commencés.

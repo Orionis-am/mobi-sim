@@ -15,6 +15,7 @@ dependencies = [
     "openai>=1.30",
     "python-dotenv>=1.0",
     "twilio>=9.11.0",
+    "pandas>=2.3.3",
 ]
 
 [dependency-groups]
