@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 import requests
 
-from module_c import cell_id, ipinfo_client, lbs_poi, map_viz, opencellid_loader, terrain_sim, toa, wifi_fp
+from module_c import cell_id, fitness, ipinfo_client, lbs_poi, map_viz, opencellid_loader, terrain_sim, toa, wifi_fp
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -626,3 +626,149 @@ class TestSaveMapHtml:
         out_dir = tmp_path / "nested" / "results"
         map_viz.save_map_html(m, "test_map.html", output_dir=out_dir)
         assert out_dir.exists()
+
+
+# --- fitness ---------------------------------------------------------------
+
+
+def _fitness_terrain() -> terrain_sim.Terrain:
+    # 4 real BTS at the corners of a 10km square.
+    df = pd.DataFrame({"x": [0.0, 10_000.0, 0.0, 10_000.0], "y": [0.0, 0.0, 10_000.0, 10_000.0]})
+    return terrain_sim.Terrain(bts=df, lon0=0.0, lat0=0.0)
+
+
+class TestDecodeChromosome:
+    def test_zero_maps_to_bbox_min_one_maps_to_bbox_max(self):
+        terrain = _fitness_terrain()
+        positions = fitness.decode_chromosome([0.0, 0.0, 1.0, 1.0], terrain)
+        np.testing.assert_allclose(positions[0], [0.0, 0.0])
+        np.testing.assert_allclose(positions[1], [10_000.0, 10_000.0])
+
+    def test_out_of_range_genes_are_clipped(self):
+        terrain = _fitness_terrain()
+        positions = fitness.decode_chromosome([-0.5, 1.5], terrain)
+        np.testing.assert_allclose(positions[0], [0.0, 10_000.0])
+
+    def test_multiple_bts_shape(self):
+        terrain = _fitness_terrain()
+        positions = fitness.decode_chromosome([0.0, 0.0, 0.5, 0.5, 1.0, 1.0], terrain)
+        assert positions.shape == (3, 2)
+
+    def test_odd_length_raises(self):
+        terrain = _fitness_terrain()
+        with pytest.raises(ValueError):
+            fitness.decode_chromosome([0.0, 0.5, 1.0], terrain)
+
+
+class TestCoverageFraction:
+    def test_huge_radius_covers_everything(self):
+        terrain = _fitness_terrain()
+        new_positions = np.array([[5_000.0, 5_000.0]])
+        result = fitness.coverage_fraction(terrain, new_positions, n_test_points=50, coverage_radius_m=1_000_000.0, seed=0)
+        assert result == pytest.approx(1.0)
+
+    def test_tiny_radius_covers_almost_nothing(self):
+        terrain = _fitness_terrain()
+        new_positions = np.array([[5_000.0, 5_000.0]])
+        result = fitness.coverage_fraction(terrain, new_positions, n_test_points=200, coverage_radius_m=0.001, seed=0)
+        assert result < 0.01
+
+    def test_seed_reproducibility(self):
+        terrain = _fitness_terrain()
+        new_positions = np.array([[5_000.0, 5_000.0]])
+        a = fitness.coverage_fraction(terrain, new_positions, n_test_points=50, seed=3)
+        b = fitness.coverage_fraction(terrain, new_positions, n_test_points=50, seed=3)
+        assert a == pytest.approx(b)
+
+
+class TestMeanInterference:
+    def test_closer_new_bts_pair_has_more_interference(self):
+        close_pair = np.array([[5_000.0, 5_000.0], [5_010.0, 5_000.0]])
+        far_pair = np.array([[1_000.0, 1_000.0], [9_000.0, 9_000.0]])
+        existing = np.array([[-100_000.0, -100_000.0]])  # far away, irrelevant to either pair
+        close_interference = fitness.mean_interference(close_pair, existing, interference_radius_m=1_000.0)
+        far_interference = fitness.mean_interference(far_pair, existing, interference_radius_m=1_000.0)
+        assert close_interference > far_interference
+
+    def test_no_neighbors_within_radius_is_zero(self):
+        isolated = np.array([[5_000.0, 5_000.0]])
+        existing = np.array([[-100_000.0, -100_000.0]])
+        assert fitness.mean_interference(isolated, existing, interference_radius_m=1_000.0) == 0.0
+
+    def test_empty_new_positions_is_zero(self):
+        existing = np.array([[0.0, 0.0]])
+        assert fitness.mean_interference(np.empty((0, 2)), existing) == 0.0
+
+
+class TestMeanCostToInfrastructure:
+    def test_new_bts_at_existing_bts_is_near_zero_cost(self):
+        existing = np.array([[0.0, 0.0], [10_000.0, 10_000.0]])
+        new_positions = np.array([[0.0, 0.0]])
+        assert fitness.mean_cost_to_infrastructure(new_positions, existing) == pytest.approx(0.0, abs=1e-6)
+
+    def test_far_new_bts_has_higher_cost(self):
+        existing = np.array([[0.0, 0.0]])
+        near = fitness.mean_cost_to_infrastructure(np.array([[100.0, 0.0]]), existing)
+        far = fitness.mean_cost_to_infrastructure(np.array([[10_000.0, 0.0]]), existing)
+        assert far > near
+
+    def test_empty_new_positions_is_zero(self):
+        existing = np.array([[0.0, 0.0]])
+        assert fitness.mean_cost_to_infrastructure(np.empty((0, 2)), existing) == 0.0
+
+
+class TestBtsCoverageFitnessComponents:
+    def test_returns_expected_keys_with_finite_values(self):
+        terrain = _fitness_terrain()
+        components = fitness.bts_coverage_fitness_components([0.5, 0.5], terrain=terrain, n_test_points=50, seed=0)
+        for key in ("coverage_pct", "interference", "cost_m", "f1", "f2", "f3"):
+            assert key in components
+            assert np.isfinite(components[key])
+
+    def test_f1_is_negative_coverage_pct(self):
+        terrain = _fitness_terrain()
+        components = fitness.bts_coverage_fitness_components([0.5, 0.5], terrain=terrain, n_test_points=50, seed=0)
+        assert components["f1"] == pytest.approx(-components["coverage_pct"])
+
+    def test_seed_reproducibility(self):
+        terrain = _fitness_terrain()
+        a = fitness.bts_coverage_fitness_components([0.5, 0.5], terrain=terrain, n_test_points=50, seed=7)
+        b = fitness.bts_coverage_fitness_components([0.5, 0.5], terrain=terrain, n_test_points=50, seed=7)
+        assert a == b
+
+
+class TestBtsCoverageFitness:
+    def test_matches_components_f1_f2_f3(self):
+        terrain = _fitness_terrain()
+        components = fitness.bts_coverage_fitness_components([0.5, 0.5], terrain=terrain, n_test_points=50, seed=0)
+        result = fitness.bts_coverage_fitness([0.5, 0.5], terrain=terrain, n_test_points=50, seed=0)
+        assert result == (components["f1"], components["f2"], components["f3"])
+
+    def test_returns_a_3_tuple(self):
+        terrain = _fitness_terrain()
+        result = fitness.bts_coverage_fitness([0.5, 0.5, 0.2, 0.8], terrain=terrain, n_test_points=50, seed=0)
+        assert len(result) == 3
+
+
+def _fake_aveyron_df() -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    n = 10
+    return pd.DataFrame({"lon": rng.uniform(2.0, 3.0, n), "lat": rng.uniform(44.0, 44.5, n), "mcc": 208})
+
+
+class TestGetDefaultTerrain:
+    def test_terrain_is_generated_once_and_cached(self, monkeypatch):
+        fitness._terrain_cache = None
+        calls = []
+
+        def _fake_load(*args, **kwargs):
+            calls.append(1)
+            return _fake_aveyron_df()
+
+        monkeypatch.setattr(opencellid_loader, "load_opencellid_csv", _fake_load)
+
+        fitness.bts_coverage_fitness([0.5, 0.5], n_test_points=20, seed=0)
+        fitness.bts_coverage_fitness([0.2, 0.8], n_test_points=20, seed=1)
+
+        assert len(calls) == 1
+        fitness._terrain_cache = None

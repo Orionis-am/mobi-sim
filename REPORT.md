@@ -1003,6 +1003,61 @@ création de fichier + création du dossier de sortie s'il manque.
 **Résultats de test** : 12 nouveaux tests (75 au total pour `module_c`), tous verts. Couverture
 `map_viz.py` : **100 %**.
 
+### `fitness.py`
+
+**Choix — contrat multi-objectif, différent de `codec_fitness`/`routing_fitness`** :
+`bts_coverage_fitness(chromosome) -> (f1, f2, f3)` retourne directement le triplet d'objectifs
+plutôt qu'un score scalaire — écart délibéré par rapport au contrat `*_fitness() -> float` des
+modules A et B, parce que le Pb2 du Module F est explicitement multi-objectif Pareto (NSGA-II via
+pymoo attend un tableau d'objectifs par individu, pas un seul nombre). Documenté explicitement en
+tête de fichier pour que ce ne soit jamais lu comme un oubli.
+
+**Chromosome** : `[x1, y1, ..., xN, yN]`, coordonnées normalisées `[0, 1]` (repliées/`clip`ées),
+dénormalisées vers la bounding box réelle du terrain par `decode_chromosome(chromosome, terrain)`
+(spec ligne 333).
+
+**Les trois objectifs** (spec lignes 336-337) :
+- **f1 = −couverture (%)** — `coverage_fraction` tire des points de test aléatoires dans la
+  bounding box et mesure la fraction à moins de `COVERAGE_RADIUS_M` (3 km, cohérent avec l'erreur
+  médiane Cell-ID ≈ 3,4 km mesurée plus haut sur les mêmes données) de n'importe quelle BTS
+  (réelle existante + nouvelle candidate).
+- **f2 = interférence moyenne** — `mean_interference` : chaque voisin (existant ou nouveau) à moins
+  de `INTERFERENCE_RADIUS_M` (1 km) contribue `(rayon − distance) / rayon` (1 à distance nulle, 0 au
+  bord), moyenné par nouvelle BTS puis sur toutes les nouvelles BTS.
+- **f3 = coût** — `mean_cost_to_infrastructure` : distance moyenne de chaque nouvelle BTS à la BTS
+  réelle existante la plus proche, le proxy route/infrastructure retenu avec l'utilisateur (le
+  sujet demande un coût « proportionnel à la distance aux routes » sans jamais fournir de jeu de
+  données routier — interrogé explicitement sur ce point, décision : les vraies BTS s'agrègent en
+  pratique le long des routes/infrastructures, donc la distance à la BTS existante la plus proche
+  approxime la distance à la route, sans appel réseau supplémentaire par évaluation — cette
+  fonction sera appelée des milliers de fois par NSGA-II, même raisonnement que
+  `codec_fitness`/`estimate_wer_proxy` en Module A).
+
+**Terrain par défaut mis en cache** : `_get_default_terrain()` charge et échantillonne
+`docs/208.csv` (Aveyron, 500 BTS, `seed=42`) une seule fois par processus — même schéma que
+`_reference_cache` en Module A, testé de la même façon (monkeypatch de
+`opencellid_loader.load_opencellid_csv`, vérification d'un seul appel à travers deux évaluations
+de fitness, cf. `TestCodecFitness.test_reference_signal_is_generated_once_and_cached` en Module A).
+Tous les autres tests passent un terrain synthétique explicite — aucun test ne dépend du vrai
+`docs/208.csv`.
+
+**Résultat sur données réelles** (500 BTS Aveyron, `seed=1`, 300 points de test) : une BTS placée au
+centre du terrain donne `f1≈-36,3`, `f2≈0` (zone rurale, peu de voisins à moins d'1 km),
+`f3≈4660 m` ; la même BTS placée dans un coin donne `f1≈-36,0` (couverture quasi inchangée,
+dominée par les 500 BTS réelles existantes), `f3≈2336 m` (plus proche d'un cluster d'infrastructure
+existant à cet endroit précis) — le placement affecte nettement le coût, peu la couverture globale
+avec une seule BTS ajoutée à 500 existantes, cohérent avec l'intuition.
+
+**Tests** : décodage aux bornes et avec clipping, longueur impaire lève une erreur, couverture avec
+rayon énorme/minuscule, reproductibilité par seed ; interférence plus forte entre BTS proches
+qu'éloignées, nulle sans voisin, nulle sur un tableau vide ; coût quasi nul si la nouvelle BTS
+coïncide avec une existante, croissant avec la distance, nul sur un tableau vide ; breakdown
+complet (clés, valeurs finies, `f1 = -coverage_pct`, reproductibilité), tuple `bts_coverage_fitness`
+cohérent avec `bts_coverage_fitness_components`, mise en cache du terrain par défaut.
+
+**Résultats de test** : 19 nouveaux tests (94 au total pour `module_c`), tous verts. Couverture
+`fitness.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1016,9 +1071,12 @@ dans les sections « Complément » de `twilio_client.py` ci-dessus. `compare.py
 d'un vrai `RealDeliverySample` pour la comparaison sim/réel du rapport final (§8 Q2), qui pourra
 aussi s'appuyer sur les deux contraintes trial découvertes au passage (politique de template SMS,
 `GET /Messages/{Sid}` 403 alors que `GET /Messages` fonctionne) comme causes structurelles de
-l'écart. Rien ne reste en attente pour Module B. Module C en cours
-(`opencellid_loader.py`/`terrain_sim.py`/`cell_id.py`/`toa.py`/`wifi_fp.py`/`ipinfo_client.py`/
-`lbs_poi.py` faits, reste `map_viz.py`, `fitness.py`) — `manual_nominatim_check.py` exécuté avec
-succès (10 POI réels près de Rodez, voir la section `lbs_poi.py` ci-dessus) ; `manual_ipinfo_check.py`
-reste prêt mais en attente d'un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de
-remplissage `xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Modules D–F, non commencés.
+l'écart. Rien ne reste en attente pour Module B. Module C est complet côté code et tests : tous les
+fichiers de `docs/SUJET.md` §3 implémentés et testés (94 tests, 96 % de couverture — 100 % hors les
+deux scripts manuels `manual_ipinfo_check.py`/`manual_nominatim_check.py`, non exercés par pytest
+par conception). `manual_nominatim_check.py` exécuté avec succès (10 POI réels près de Rodez, voir
+la section `lbs_poi.py` ci-dessus) ; reste en attente, non bloquant : `manual_ipinfo_check.py`,
+prêt mais nécessitant un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de remplissage
+`xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Tableau comparatif Cell-ID/TOA/Wi-Fi/IP et
+carte Folium démonstrative (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module
+C 2-3 p.). Modules D–F, non commencés.
