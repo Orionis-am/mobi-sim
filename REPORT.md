@@ -764,6 +764,33 @@ vrai `docs/208.csv` retourne bien 1000 BTS réelles en Aveyron.
 
 **Résultats de test** : 7 tests, tous verts. Couverture `opencellid_loader.py` : **100 %**.
 
+### `terrain_sim.py`
+
+**Choix** : tout ce qui vient ensuite (Voronoï, trilatération TOA, grille Wi-Fi) raisonne
+naturellement en mètres euclidiens, pas en degrés (lon, lat) — projection équirectangulaire
+centrée sur le centroïde des BTS échantillonnées plutôt qu'une projection géodésique complète
+(UTM via `pyproj`, absent de `docs/SUJET.md` §6.1) : la zone d'étude (Aveyron, ~100 km) est assez
+petite pour que l'erreur d'approximation reste largement sous 0,1 %, sans dépendance
+supplémentaire.
+- `lonlat_to_xy(lon, lat, lon0, lat0)` / `xy_to_lonlat(x, y, lon0, lat0)` — paire de fonctions
+  réciproques, vectorisées (acceptent scalaires ou tableaux numpy). La seconde est nécessaire
+  parce que Folium (à venir, `map_viz.py`) affiche en (lon, lat), pas en mètres.
+- `Terrain` (dataclass gelée) : le DataFrame BTS d'origine enrichi des colonnes `x`/`y`, plus
+  `lon0`/`lat0` (centre de projection). `positions_xy` et `bbox_xy` exposent respectivement un
+  tableau `(N, 2)` et une bounding box en mètres — la forme exacte qu'attendront
+  `scipy.spatial.Voronoi`, `scipy.optimize.minimize` et `sklearn.neighbors` dans les fichiers
+  suivants.
+- `build_terrain(bts_df)` centre la projection sur le centroïde des BTS *échantillonnées* (pas un
+  point de référence global fixe) — l'origine du repère local reste proche de (0, 0) quelle que
+  soit la région choisie.
+
+**Tests** : aller-retour lon/lat → x/y → lon/lat, vérification qu'un degré de latitude fait bien
+~111,2 km (formule de référence, indépendante de l'implémentation), centrage sur le centroïde,
+cohérence de `bbox_xy` avec le min/max réel, conservation des colonnes d'origine du DataFrame.
+
+**Résultats de test** : 8 nouveaux tests (15 au total pour `module_c`), tous verts. Couverture
+`terrain_sim.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
