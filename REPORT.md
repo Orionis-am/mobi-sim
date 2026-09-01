@@ -972,6 +972,37 @@ de petite ville française.
 **Résultats de test** : 9 nouveaux tests (63 au total pour `module_c`), tous verts. Couverture
 `lbs_poi.py` : **100 %**.
 
+### `map_viz.py`
+
+**Choix** : même discipline que `module_a/visualize.py` — les fonctions de construction ne font
+aucune I/O et retournent un objet déjà peuplé (`folium.Map` au lieu d'un `Figure` matplotlib),
+`save_map_html` est le seul point d'écriture explicite, dans le même dossier `results/` (gitignoré)
+que le reste du projet. Les POI sont acceptés en duck-typing (`.lat`/`.lon`/`.name`/`.category`/
+`.distance_m`) plutôt que via un import de `lbs_poi.Poi` — ce fichier n'a ainsi aucune dépendance
+dure envers l'origine des données.
+- `build_position_map(true_lat, true_lon, estimated_lat, estimated_lon, uncertainty_radius_m=None,
+  pois=None, zoom_start=15)` — marqueur position estimée (toujours), position réelle (si fournie),
+  cercle d'incertitude (si fourni), marqueurs POI cliquables (spec ligne 203-204).
+- `add_toa_range_circles(m, anchors_latlon, radii_m)` — superpose les cercles de portée TOA sur une
+  carte existante (spec ligne 193), retourne la même instance de carte pour chaînage.
+- `save_map_html(m, filename, output_dir="results")` — carte HTML autonome, lisible hors connexion
+  après génération (spec ligne 204).
+
+**Vérification** : comme pour une carte, « est-ce que ça a l'air correct » ne se teste pas par
+assertion — vérifié plutôt en comptant les objets `folium.Marker`/`folium.Circle` ajoutés à
+`m._children`, plus une démonstration bout-en-bout sur données réelles (échantillon Aveyron
+500 BTS, position estimée par TOA, 8 vrais POI Overpass autour de cette position, rayon 1 km) :
+carte HTML de 15,7 Ko générée dans `results/module_c_demo.html`, confirmée structurellement (10
+marqueurs Leaflet = 1 position estimée + 1 position réelle + 8 POI, 1 cercle = incertitude).
+
+**Tests** : marqueur estimé toujours présent, marqueur réel ajouté/omis selon fourniture, cercle
+d'incertitude ajouté/omis selon fourniture, marqueurs POI ajoutés (et absence de POI gérée
+gracieusement), cercles de portée TOA (un par ancre, retour de la même instance pour chaînage),
+création de fichier + création du dossier de sortie s'il manque.
+
+**Résultats de test** : 12 nouveaux tests (75 au total pour `module_c`), tous verts. Couverture
+`map_viz.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

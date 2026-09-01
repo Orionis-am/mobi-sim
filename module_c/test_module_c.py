@@ -9,12 +9,13 @@ these tests use small synthetic CSVs instead, for speed.
 
 from __future__ import annotations
 
+import folium
 import numpy as np
 import pandas as pd
 import pytest
 import requests
 
-from module_c import cell_id, ipinfo_client, lbs_poi, opencellid_loader, terrain_sim, toa, wifi_fp
+from module_c import cell_id, ipinfo_client, lbs_poi, map_viz, opencellid_loader, terrain_sim, toa, wifi_fp
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -547,3 +548,81 @@ class TestNearbyPois:
         session = FakeOverpassSession([], status_code=500)
         with pytest.raises(requests.HTTPError):
             lbs_poi.nearby_pois(48.0, 2.0, session=session)
+
+
+# --- map_viz -------------------------------------------------------------
+
+
+class _FakePoi:
+    def __init__(self, lat, lon, name="Cafe X", category="cafe", distance_m=42.0):
+        self.lat, self.lon, self.name, self.category, self.distance_m = lat, lon, name, category, distance_m
+
+
+def _markers(m: folium.Map) -> list:
+    return [c for c in m._children.values() if isinstance(c, folium.Marker)]
+
+
+def _circles(m: folium.Map) -> list:
+    return [c for c in m._children.values() if isinstance(c, folium.Circle)]
+
+
+class TestBuildPositionMap:
+    def test_returns_folium_map(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        assert isinstance(m, folium.Map)
+
+    def test_estimated_marker_always_added(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        assert len(_markers(m)) == 1
+
+    def test_true_position_marker_added_when_given(self):
+        m = map_viz.build_position_map(44.351, 2.571, 44.35, 2.57)
+        assert len(_markers(m)) == 2
+
+    def test_true_position_marker_omitted_when_none(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        assert len(_markers(m)) == 1
+
+    def test_uncertainty_circle_added_when_given(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57, uncertainty_radius_m=100.0)
+        assert len(_circles(m)) == 1
+
+    def test_uncertainty_circle_omitted_when_none(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        assert len(_circles(m)) == 0
+
+    def test_poi_markers_added(self):
+        pois = [_FakePoi(44.351, 2.572), _FakePoi(44.349, 2.569)]
+        m = map_viz.build_position_map(None, None, 44.35, 2.57, pois=pois)
+        assert len(_markers(m)) == 1 + len(pois)
+
+    def test_no_pois_defaults_to_none_gracefully(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57, pois=None)
+        assert len(_markers(m)) == 1
+
+
+class TestAddToaRangeCircles:
+    def test_adds_one_circle_per_anchor(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        anchors = [(44.351, 2.571), (44.349, 2.569)]
+        map_viz.add_toa_range_circles(m, anchors, [100.0, 150.0])
+        assert len(_circles(m)) == 2
+
+    def test_returns_the_same_map_instance(self):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        result = map_viz.add_toa_range_circles(m, [(44.351, 2.571)], [100.0])
+        assert result is m
+
+
+class TestSaveMapHtml:
+    def test_creates_file_and_returns_path(self, tmp_path):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        path = map_viz.save_map_html(m, "test_map.html", output_dir=tmp_path)
+        assert path.exists()
+        assert "<html" in path.read_text(encoding="utf-8").lower()
+
+    def test_creates_output_dir_if_missing(self, tmp_path):
+        m = map_viz.build_position_map(None, None, 44.35, 2.57)
+        out_dir = tmp_path / "nested" / "results"
+        map_viz.save_map_html(m, "test_map.html", output_dir=out_dir)
+        assert out_dir.exists()
