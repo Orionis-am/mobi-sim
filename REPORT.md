@@ -941,6 +941,37 @@ l'utilisateur crée un compte gratuit sur ipinfo.io.
 `ipinfo_client.py` : **100 %** ; `manual_ipinfo_check.py` à 0 % par conception (jamais exercé par
 pytest).
 
+### `lbs_poi.py`
+
+**Choix — Overpass plutôt que la recherche texte-libre Nominatim** : le sujet cite « Nominatim/
+Overpass » ensemble (même donnée OpenStreetMap, gratuite, sans inscription) — la recherche
+texte-libre de Nominatim ne se prête pas naturellement à « les N POI les plus proches, toutes
+catégories confondues » ; le filtre `around:rayon,lat,lon` d'Overpass QL est le bon outil pour
+cette forme de requête précise. Une seule fonction :
+- `nearby_pois(lat, lon, radius_m=500, limit=10, session=None, timeout_s=25.0)` — construit une
+  requête Overpass QL (`node(around:...)[amenity]`), sur-récupère (3× `limit`, l'ordre Overpass
+  n'étant pas garanti trié par distance), calcule la vraie distance haversine à chaque résultat, et
+  trie/tronque côté client.
+
+**Conformité spec ligne 202** : `User-Agent` obligatoire (`USER_AGENT`, envoyé sur chaque appel) ;
+limite 1 req/s — un seul appel par invocation ici n'a rien à limiter en soi, un appelant qui
+boucle sur plusieurs positions est responsable d'espacer ses appels d'au moins 1 s.
+
+**Tests** : `FakeOverpassSession`/`FakeOverpassResponse` (même principe que
+`FakeIpinfoSession`) — requête contient bien lat/lon/rayon, en-tête `User-Agent` envoyé, tri par
+distance croissante, troncature à `limit`, éléments sans coordonnées ignorés, tags manquants →
+placeholder `"?"`, statut HTTP d'erreur propagé, plus un calcul haversine vérifié (1° de latitude
+≈ 111,2 km, même référence que `terrain_sim.py`).
+
+**`manual_nominatim_check.py`** — **exécuté avec succès** (pas de clé requise, contrairement à
+ipinfo.io) : requête réelle Overpass autour du centre de Rodez (44.3506, 2.5731), 500 m — 10 POI
+réels retournés, du bar « Les Colonnes » à 86 m au point d'eau « drinking_water » à 238 m,
+mélange plausible de commerces, mobilier urbain et infrastructure de stationnement pour un centre
+de petite ville française.
+
+**Résultats de test** : 9 nouveaux tests (63 au total pour `module_c`), tous verts. Couverture
+`lbs_poi.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -955,7 +986,8 @@ d'un vrai `RealDeliverySample` pour la comparaison sim/réel du rapport final (�
 aussi s'appuyer sur les deux contraintes trial découvertes au passage (politique de template SMS,
 `GET /Messages/{Sid}` 403 alors que `GET /Messages` fonctionne) comme causes structurelles de
 l'écart. Rien ne reste en attente pour Module B. Module C en cours
-(`opencellid_loader.py`/`terrain_sim.py`/`cell_id.py`/`toa.py`/`wifi_fp.py`/`ipinfo_client.py`
-faits, reste `lbs_poi.py`, `map_viz.py`, `fitness.py`) — `manual_ipinfo_check.py` est prêt mais en
-attente d'un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de remplissage
-`xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Modules D–F, non commencés.
+(`opencellid_loader.py`/`terrain_sim.py`/`cell_id.py`/`toa.py`/`wifi_fp.py`/`ipinfo_client.py`/
+`lbs_poi.py` faits, reste `map_viz.py`, `fitness.py`) — `manual_nominatim_check.py` exécuté avec
+succès (10 POI réels près de Rodez, voir la section `lbs_poi.py` ci-dessus) ; `manual_ipinfo_check.py`
+reste prêt mais en attente d'un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de
+remplissage `xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Modules D–F, non commencés.

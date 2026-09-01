@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 import requests
 
-from module_c import cell_id, ipinfo_client, opencellid_loader, terrain_sim, toa, wifi_fp
+from module_c import cell_id, ipinfo_client, lbs_poi, opencellid_loader, terrain_sim, toa, wifi_fp
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -457,3 +457,93 @@ class TestLocateIp:
         session = FakeIpinfoSession({}, status_code=403)
         with pytest.raises(requests.HTTPError):
             ipinfo_client.locate_ip("8.8.8.8", session=session)
+
+
+# --- lbs_poi -----------------------------------------------------------------
+
+
+def _make_element(lat, lon, name="Test POI", amenity="cafe"):
+    return {"lat": lat, "lon": lon, "tags": {"name": name, "amenity": amenity}}
+
+
+class FakeOverpassResponse:
+    def __init__(self, json_data, status_code=200):
+        self._json_data = json_data
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error")
+
+    def json(self):
+        return self._json_data
+
+
+class FakeOverpassSession:
+    def __init__(self, elements=None, status_code=200):
+        self._elements = elements if elements is not None else []
+        self.status_code = status_code
+        self.post_calls: list[dict] = []
+
+    def post(self, url, data=None, headers=None, timeout=None):
+        self.post_calls.append({"url": url, "data": data, "headers": headers, "timeout": timeout})
+        return FakeOverpassResponse({"elements": self._elements}, self.status_code)
+
+
+class TestHaversineDistance:
+    def test_one_degree_latitude_is_about_111km(self):
+        d = lbs_poi._haversine_distance_m(48.0, 2.0, 49.0, 2.0)
+        assert d == pytest.approx(111_195.0, rel=0.01)
+
+    def test_same_point_is_zero(self):
+        d = lbs_poi._haversine_distance_m(48.0, 2.0, 48.0, 2.0)
+        assert d == pytest.approx(0.0, abs=1e-6)
+
+
+class TestNearbyPois:
+    def test_sends_query_with_lat_lon_radius(self):
+        session = FakeOverpassSession([])
+        lbs_poi.nearby_pois(48.0, 2.0, radius_m=500.0, session=session)
+        payload = session.post_calls[0]["data"]["data"]
+        assert "48.0" in payload
+        assert "2.0" in payload
+        assert "500.0" in payload
+
+    def test_sends_mandatory_user_agent_header(self):
+        session = FakeOverpassSession([])
+        lbs_poi.nearby_pois(48.0, 2.0, session=session)
+        assert session.post_calls[0]["headers"]["User-Agent"] == lbs_poi.USER_AGENT
+
+    def test_sorts_by_distance_nearest_first(self):
+        elements = [
+            _make_element(48.01, 2.0, name="Far"),
+            _make_element(48.0005, 2.0, name="Near"),
+            _make_element(48.002, 2.0, name="Mid"),
+        ]
+        session = FakeOverpassSession(elements)
+        pois = lbs_poi.nearby_pois(48.0, 2.0, session=session)
+        assert [p.name for p in pois] == ["Near", "Mid", "Far"]
+
+    def test_truncates_to_limit(self):
+        elements = [_make_element(48.0 + i * 0.0001, 2.0, name=f"P{i}") for i in range(20)]
+        session = FakeOverpassSession(elements)
+        pois = lbs_poi.nearby_pois(48.0, 2.0, limit=5, session=session)
+        assert len(pois) == 5
+
+    def test_skips_elements_missing_coordinates(self):
+        elements = [{"tags": {"name": "NoCoords"}}, _make_element(48.001, 2.0, name="HasCoords")]
+        session = FakeOverpassSession(elements)
+        pois = lbs_poi.nearby_pois(48.0, 2.0, session=session)
+        assert [p.name for p in pois] == ["HasCoords"]
+
+    def test_missing_tags_default_to_placeholder(self):
+        elements = [{"lat": 48.001, "lon": 2.0, "tags": {}}]
+        session = FakeOverpassSession(elements)
+        pois = lbs_poi.nearby_pois(48.0, 2.0, session=session)
+        assert pois[0].name == "?"
+        assert pois[0].category == "?"
+
+    def test_http_error_status_raises(self):
+        session = FakeOverpassSession([], status_code=500)
+        with pytest.raises(requests.HTTPError):
+            lbs_poi.nearby_pois(48.0, 2.0, session=session)
