@@ -12,6 +12,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
+from twilio.base.exceptions import TwilioRestException
 
 from module_b import compare, entities, fitness, network_sim, pdu, twilio_client
 
@@ -355,10 +356,14 @@ class FakeTwilioMessage:
 
 
 class FakeMessageContext:
-    def __init__(self, message: FakeTwilioMessage):
+    def __init__(self, message: FakeTwilioMessage | None, fetch_error_status: int | None = None):
         self._message = message
+        self._fetch_error_status = fetch_error_status
 
     def fetch(self) -> FakeTwilioMessage:
+        if self._fetch_error_status is not None:
+            raise TwilioRestException(self._fetch_error_status, "https://api.twilio.com/fake", msg="fake error")
+        assert self._message is not None
         return self._message
 
 
@@ -367,6 +372,11 @@ class FakeMessagesResource:
         self._messages: dict[str, FakeTwilioMessage] = {}
         self._next_id = 1
         self.create_calls: list[dict] = []
+        # Simulates the trial-account quirk where GET /Messages/{Sid} 403s
+        # (see get_delivery_status's docstring) — None means fetch succeeds normally.
+        self.fetch_error_status: int | None = None
+        # Simulates a just-sent message not yet appearing in GET /Messages either.
+        self.hidden_from_list: set[str] = set()
 
     def create(self, to: str, from_: str, body: str) -> FakeTwilioMessage:
         sid = f"SM{self._next_id:032d}"
@@ -377,7 +387,10 @@ class FakeMessagesResource:
         return message
 
     def __call__(self, sid: str) -> FakeMessageContext:
-        return FakeMessageContext(self._messages[sid])
+        return FakeMessageContext(self._messages.get(sid), fetch_error_status=self.fetch_error_status)
+
+    def list(self, limit: int = 50) -> list[FakeTwilioMessage]:
+        return [m for m in self._messages.values() if m.sid not in self.hidden_from_list][:limit]
 
 
 class FakeVerification:
@@ -479,6 +492,31 @@ class TestGetDeliveryStatus:
         status = twilio_client.get_delivery_status(sent.sid, client=client)
         assert status.sid == sent.sid
         assert status.status == "delivered"
+
+    def test_falls_back_to_list_when_fetch_is_forbidden(self):
+        client = FakeTwilioClient()
+        sent = twilio_client.send_sms("+15551234567", "hi", from_="+15550000000", client=client)
+        client.messages._messages[sent.sid].status = "delivered"
+        client.messages.fetch_error_status = 403
+
+        status = twilio_client.get_delivery_status(sent.sid, client=client)
+        assert status.sid == sent.sid
+        assert status.status == "delivered"
+
+    def test_reraises_non_forbidden_fetch_errors(self):
+        client = FakeTwilioClient()
+        sent = twilio_client.send_sms("+15551234567", "hi", from_="+15550000000", client=client)
+        client.messages.fetch_error_status = 500
+
+        with pytest.raises(TwilioRestException):
+            twilio_client.get_delivery_status(sent.sid, client=client)
+
+    def test_reraises_forbidden_fetch_when_not_found_in_list_either(self):
+        client = FakeTwilioClient()
+        client.messages.fetch_error_status = 403
+
+        with pytest.raises(TwilioRestException):
+            twilio_client.get_delivery_status("SMunknown", client=client)
 
 
 class TestClient:
@@ -597,6 +635,45 @@ class TestMeasureRealDelivery:
         assert sample.delivery_latency_s is None
         assert sample.delivered is False
         assert sample.final_status == "queued"
+
+    def test_retries_through_transient_forbidden_fetch(self):
+        # A just-sent message can 403 on both fetch and list for a few
+        # seconds before Twilio's API indexes it (observed on a trial
+        # account, see REPORT.md) — the loop must treat that as "not yet
+        # delivered" and keep polling, not abort.
+        client = FakeTwilioClient()
+        clock = _FakeClock()
+        first_sid = "SM" + "1".rjust(32, "0")
+        client.messages.fetch_error_status = 403
+        client.messages.hidden_from_list.add(first_sid)
+
+        def sleep_then_reveal_and_deliver(seconds: float) -> None:
+            clock.sleep(seconds)
+            client.messages.fetch_error_status = None
+            client.messages.hidden_from_list.discard(first_sid)
+            client.messages._messages[first_sid].status = "delivered"
+
+        sample = compare.measure_real_delivery(
+            "+15551234567", "hi", from_="+15550000000", client=client,
+            poll_interval_s=2.0, poll_timeout_s=60.0,
+            sleep=sleep_then_reveal_and_deliver, now=clock.now,
+        )
+
+        assert sample.delivered is True
+        assert sample.final_status == "delivered"
+        assert sample.delivery_latency_s == pytest.approx(2.0)
+
+    def test_reraises_non_forbidden_polling_errors(self):
+        client = FakeTwilioClient()
+        clock = _FakeClock()
+        client.messages.fetch_error_status = 500
+
+        with pytest.raises(TwilioRestException):
+            compare.measure_real_delivery(
+                "+15551234567", "hi", from_="+15550000000", client=client,
+                poll_interval_s=2.0, poll_timeout_s=60.0,
+                sleep=clock.sleep, now=clock.now,
+            )
 
 
 class TestSummarizeRealSamples:

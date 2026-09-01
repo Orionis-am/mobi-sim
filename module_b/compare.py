@@ -12,6 +12,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+from twilio.base.exceptions import TwilioRestException
+
 from module_b import network_sim, twilio_client
 
 _TERMINAL_STATUSES = {"delivered", "failed", "undelivered"}
@@ -50,7 +52,17 @@ def measure_real_delivery(
     final_status = result.status
     deadline = t0 + poll_timeout_s
     while now() < deadline:
-        status = twilio_client.get_delivery_status(result.sid, client=client)
+        try:
+            status = twilio_client.get_delivery_status(result.sid, client=client)
+        except TwilioRestException as exc:
+            # A just-sent message can 403 on both the single fetch and the
+            # list fallback for a few seconds before Twilio's API indexes it
+            # (observed in practice on a trial account, see REPORT.md) — not
+            # a real failure, so keep polling like any other non-terminal status.
+            if exc.status != 403:
+                raise
+            sleep(poll_interval_s)
+            continue
         final_status = status.status
         if final_status in _TERMINAL_STATUSES:
             delivery_latency_s = now() - t0

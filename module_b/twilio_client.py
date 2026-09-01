@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 
+from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
 
 
@@ -52,9 +53,22 @@ def send_sms(to: str, body: str, from_: str | None = None, client: Client | None
 
 
 def get_delivery_status(sid: str, client: Client | None = None) -> SmsStatus:
-    """Poll Twilio for a message's current delivery status — the spec's "ou polling" alternative to the webhook."""
+    """Poll Twilio for a message's current delivery status — the spec's "ou polling" alternative to the webhook.
+
+    Falls back to listing recent messages and matching by sid when the
+    single-resource fetch is forbidden — observed in practice on a trial
+    account (``GET /Messages/{Sid}`` 403s even though the same message is
+    fully visible via ``GET /Messages``; see REPORT.md).
+    """
     client = client or _client()
-    message = client.messages(sid).fetch()
+    try:
+        message = client.messages(sid).fetch()
+    except TwilioRestException as exc:
+        if exc.status != 403:
+            raise
+        message = next((m for m in client.messages.list(limit=50) if m.sid == sid), None)
+        if message is None:
+            raise
     return SmsStatus(sid=message.sid, status=message.status, error_code=message.error_code, date_updated=message.date_updated)
 
 
@@ -82,10 +96,10 @@ class VerificationCheckResult:
 def start_verification(to: str, channel: str = "sms", client: Client | None = None) -> VerificationResult:
     """Send a real OTP via the Twilio Verify API.
 
-    Trial accounts reject arbitrary ``messages.create(body=...)`` content
+    Trial accounts reject free-text ``messages.create(body=...)`` content
     (error 60409, "Custom message did not match any template" — see
-    REPORT.md); Verify sidesteps this because its SMS body is Twilio's own
-    fixed OTP template, never customer-supplied text.
+    REPORT.md); Verify sidesteps the whole restriction because its SMS body
+    is Twilio's own fixed OTP template, never customer-supplied text.
     """
     client = client or _client()
     verification = client.verify.v2.services(_verify_service_sid()).verifications.create(to=to, channel=channel)
