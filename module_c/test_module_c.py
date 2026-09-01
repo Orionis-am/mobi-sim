@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from module_c import cell_id, opencellid_loader, terrain_sim, toa
+from module_c import cell_id, opencellid_loader, terrain_sim, toa, wifi_fp
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -283,3 +283,100 @@ class TestToaEvaluateAccuracy:
         a = toa.evaluate_accuracy(_corner_terrain(), n_positions=10, seed=5)
         b = toa.evaluate_accuracy(_corner_terrain(), n_positions=10, seed=5)
         assert a["median_error_m"] == pytest.approx(b["median_error_m"])
+
+
+# --- wifi_fp -------------------------------------------------------------
+
+
+def _large_square_terrain() -> terrain_sim.Terrain:
+    # 500x500 area, 100m grid cells -> 5x5 = 25 fingerprint grid cells.
+    df = pd.DataFrame({"x": [0.0, 500.0, 0.0, 500.0, 250.0], "y": [0.0, 0.0, 500.0, 500.0, 250.0]})
+    return terrain_sim.Terrain(bts=df, lon0=0.0, lat0=0.0)
+
+
+class TestSimulateRssi:
+    def test_rssi_decreases_with_distance(self):
+        bts = np.array([[0.0, 0.0]])
+        near = wifi_fp.simulate_rssi(np.array([10.0, 0.0]), bts)
+        far = wifi_fp.simulate_rssi(np.array([1000.0, 0.0]), bts)
+        assert near[0] > far[0]
+
+    def test_zero_noise_is_deterministic(self):
+        bts = np.array([[0.0, 0.0], [100.0, 0.0]])
+        a = wifi_fp.simulate_rssi(np.array([10.0, 10.0]), bts, noise_std_db=0.0)
+        b = wifi_fp.simulate_rssi(np.array([10.0, 10.0]), bts, noise_std_db=0.0)
+        np.testing.assert_allclose(a, b)
+
+    def test_noise_perturbs_reading(self):
+        bts = np.array([[0.0, 0.0]])
+        rng = np.random.default_rng(0)
+        rssi = wifi_fp.simulate_rssi(np.array([10.0, 0.0]), bts, noise_std_db=4.0, rng=rng)
+        noiseless = wifi_fp.simulate_rssi(np.array([10.0, 0.0]), bts, noise_std_db=0.0)
+        assert rssi[0] != pytest.approx(noiseless[0])
+
+
+class TestBuildFingerprintGrid:
+    def test_grid_size_matches_cell_and_zone_size(self):
+        terrain = _large_square_terrain()
+        centroids, fingerprints = wifi_fp.build_fingerprint_grid(terrain, zone_center_xy=np.array([250.0, 250.0]), zone_size_m=500.0, cell_size_m=100.0)
+        assert len(centroids) == 25
+        assert fingerprints.shape == (25, 5)
+
+    def test_default_zone_is_scoped_not_full_terrain_bbox(self):
+        # A terrain far larger than the default 2km zone must not blow up the grid size.
+        rng = np.random.default_rng(0)
+        n = 50
+        df = pd.DataFrame({"x": rng.uniform(0, 200_000, n), "y": rng.uniform(0, 150_000, n)})
+        terrain = terrain_sim.Terrain(bts=df, lon0=0.0, lat0=0.0)
+        centroids, _ = wifi_fp.build_fingerprint_grid(terrain)
+        assert len(centroids) < 1_000
+
+    def test_zone_smaller_than_cell_size_still_yields_one_cell(self):
+        # zone_size_m < cell_size_m means np.arange would produce zero points on that axis;
+        # build_fingerprint_grid must fall back to a single centroid rather than an empty grid.
+        terrain = _large_square_terrain()
+        centroids, fingerprints = wifi_fp.build_fingerprint_grid(terrain, zone_center_xy=np.array([0.0, 0.0]), zone_size_m=50.0, cell_size_m=100.0)
+        assert len(centroids) == 1
+
+
+class TestWifiEstimatePosition:
+    def test_noiseless_query_at_grid_centroid_recovers_it_exactly(self):
+        terrain = _large_square_terrain()
+        centroids, fingerprints = wifi_fp.build_fingerprint_grid(terrain, zone_center_xy=np.array([250.0, 250.0]), zone_size_m=500.0)
+        model = wifi_fp.fit_knn(fingerprints, k=3)
+
+        query = wifi_fp.simulate_rssi(centroids[10], terrain.positions_xy)
+        estimate = wifi_fp.estimate_position(query, centroids, model)
+        np.testing.assert_allclose(estimate, centroids[10], atol=1e-6)
+
+
+class TestWifiEvaluateAccuracy:
+    _ZONE = dict(zone_center_xy=np.array([250.0, 250.0]), zone_size_m=500.0)
+
+    def test_returns_finite_median_and_matching_error_count(self):
+        result = wifi_fp.evaluate_accuracy(_large_square_terrain(), n_positions=30, seed=0, **self._ZONE)
+        assert result["median_error_m"] >= 0.0
+        assert len(result["errors_m"]) == 30
+
+    def test_seed_reproducibility(self):
+        a = wifi_fp.evaluate_accuracy(_large_square_terrain(), n_positions=20, seed=5, **self._ZONE)
+        b = wifi_fp.evaluate_accuracy(_large_square_terrain(), n_positions=20, seed=5, **self._ZONE)
+        assert a["median_error_m"] == pytest.approx(b["median_error_m"])
+
+    def test_more_noise_degrades_accuracy(self):
+        terrain = _large_square_terrain()
+        low_noise = wifi_fp.evaluate_accuracy(terrain, n_positions=50, seed=0, noise_std_db=4.0, **self._ZONE)
+        high_noise = wifi_fp.evaluate_accuracy(terrain, n_positions=50, seed=0, noise_std_db=50.0, **self._ZONE)
+        assert high_noise["median_error_m"] > low_noise["median_error_m"]
+
+
+class TestSweepNoise:
+    def test_one_result_per_noise_level_with_matching_field(self):
+        results = wifi_fp.sweep_noise(_large_square_terrain(), [0.0, 4.0, 10.0], n_positions=10, seed=0)
+        assert [r["noise_std_db"] for r in results] == [0.0, 4.0, 10.0]
+        assert all("median_error_m" in r for r in results)
+
+    def test_seed_reproducibility(self):
+        a = wifi_fp.sweep_noise(_large_square_terrain(), [0.0, 10.0], n_positions=10, seed=3)
+        b = wifi_fp.sweep_noise(_large_square_terrain(), [0.0, 10.0], n_positions=10, seed=3)
+        assert [r["median_error_m"] for r in a] == [r["median_error_m"] for r in b]

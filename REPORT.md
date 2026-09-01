@@ -864,6 +864,51 @@ point de départ explicite, précision raisonnable avec bruit réaliste, forme e
 **Résultats de test** : 9 nouveaux tests (35 au total pour `module_c`), tous verts. Couverture
 `toa.py` : **100 %**.
 
+### `wifi_fp.py`
+
+**Choix — empreintes réutilisant les vraies BTS** : le sujet ne définit nulle part un jeu de
+« points d'accès Wi-Fi » séparé — comme Cell-ID et TOA, ce fichier réutilise les positions réelles
+des BTS échantillonnées comme sources du signal simulé plutôt que d'inventer un dataset
+supplémentaire. RSSI simulé par un modèle de perte de parcours log-distance standard (référence à
+1 m + bruit gaussien optionnel), pas un modèle physique calibré — même esprit que la dégradation
+SNR de `module_a/codecs.py`.
+
+**Piège trouvé en testant sur les vraies données — portée du fingerprinting** : le fingerprinting
+Wi-Fi est par nature une technique à échelle locale (un bâtiment, un campus, un quartier —
+quelques centaines de mètres à quelques km), contrairement à Cell-ID/TOA qui opèrent sur tout le
+réseau macro. Une première version calquait la grille 100 m sur la bounding box *entière* du
+terrain — sur l'échantillon Aveyron réel (~159 km × 122 km), ça fait **~1,9 million de cellules**,
+un calcul qui ne termine pas en temps raisonnable. Corrigé : `build_fingerprint_grid` et
+`evaluate_accuracy` prennent désormais un `zone_center_xy`/`zone_size_m` (2 km par défaut, centré
+sur le centroïde des BTS) délimitant une zone locale, indépendante de l'étendue macro du terrain —
+recentré sur ce qu'un fingerprinting Wi-Fi réel couvrirait effectivement.
+- `simulate_rssi(position_xy, bts_positions_xy, noise_std_db=0.0, rng=None)` — RSSI par BTS.
+- `build_fingerprint_grid(terrain, zone_center_xy=None, zone_size_m=2000.0, cell_size_m=100.0)` —
+  grille de référence sans bruit sur la zone locale (spec ligne 194 : grille 100 m × 100 m).
+- `fit_knn(fingerprints, k=3)` / `estimate_position(query, centroids, model)` — k-NN
+  (`sklearn.neighbors.NearestNeighbors`) sur l'espace des empreintes RSSI ; estimation = moyenne
+  des k centroïdes de grille les plus proches en distance RSSI.
+- `evaluate_accuracy(...)` / `sweep_noise(terrain, noise_levels_db, ...)` — la seconde répète la
+  première à plusieurs niveaux de bruit pour produire la courbe « précision en fonction du bruit »
+  demandée par le sujet (spec ligne 195), une seed dérivée par point (même principe que
+  `network_sim.sweep_overload` en Module B) pour rester reproductible sans partager le bruit
+  d'échantillonnage entre points.
+
+**Résultat sur données réelles** (500 BTS Aveyron, zone locale par défaut 2 km, 100 positions,
+`seed=1`) : erreur médiane 25,7 m à bruit nul (récupération quasi exacte sur la grille), 488 m à
+4 dB, 992 m à 8 dB, 1116 m à 16 dB — dégradation nette et monotone avec le bruit, cohérente avec ce
+que le sujet demande de montrer.
+
+**Tests** : RSSI décroissant avec la distance, déterminisme à bruit nul, perturbation par le bruit,
+taille de grille correcte pour une zone/cellule données, garde-fou zone-plus-petite-que-la-cellule
+(retombe sur une seule cellule plutôt qu'une grille vide), non-explosion de la grille pour un
+terrain largement plus grand que la zone par défaut, récupération exacte d'un centroïde de grille à
+bruit nul, forme/reproductibilité de `evaluate_accuracy`, dégradation avec le bruit, un résultat par
+niveau de bruit dans `sweep_noise` et sa reproductibilité.
+
+**Résultats de test** : 12 nouveaux tests (47 au total pour `module_c`), tous verts. Couverture
+`wifi_fp.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
