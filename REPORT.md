@@ -791,6 +791,43 @@ cohérence de `bbox_xy` avec le min/max réel, conservation des colonnes d'origi
 **Résultats de test** : 8 nouveaux tests (15 au total pour `module_c`), tous verts. Couverture
 `terrain_sim.py` : **100 %**.
 
+### `cell_id.py`
+
+**Choix — positionnement Cell-ID par centroïde Voronoï** (spec ligne 190-191) : le point piégeux
+est que `scipy.spatial.Voronoi` laisse les cellules de bord non bornées (sommets « à l'infini »),
+sans centroïde défini. Solution standard plutôt que d'ajouter une dépendance (`shapely`) : ajouter
+quatre points fictifs loin en dehors de la bounding box avant de construire le diagramme, ce qui
+force toutes les cellules des BTS réelles à devenir finies, puis découper (Sutherland-Hodgman,
+numpy pur) chaque cellule à la bounding box réelle avant d'en calculer le centroïde (formule du
+lacet, pondérée par l'aire).
+- `voronoi_cell_centroids(terrain)` — un centroïde par BTS réelle, calculé une seule fois (pas par
+  requête : la « erreur médiane sur 100 positions simulées » du sujet réutilise le même diagramme).
+- `estimate_position(true_xy, terrain, centroids=None)` — estimation Cell-ID = centroïde de la
+  cellule Voronoï de la BTS réelle la plus proche de `true_xy` (accepte des centroïdes
+  précalculés pour éviter de reconstruire le diagramme à chaque appel).
+- `evaluate_accuracy(terrain, n_positions=100, seed=None)` — tire `n_positions` positions
+  aléatoires dans la bounding box du terrain, mesure l'erreur pour chacune, retourne l'erreur
+  médiane (spec ligne 191) et le tableau brut.
+
+**Vérifié à la main** : cas de test à 4 BTS aux coins d'un carré 10×10 — le diagramme Voronoï est
+exactement les deux médiatrices `x=5`/`y=5`, donc la cellule (découpée) de la BTS en (0,0) est le
+carré `[0,5]×[0,5]`, de centroïde `(2.5, 2.5)` — calculé à la main et confirmé par le code
+(`test_matches_hand_computed_quadrant_centroids`), même démarche que le PDU vérifié à la main en
+Module B.
+
+**Résultat sur données réelles** (hors suite de tests, 500 BTS Aveyron échantillonnées avec
+`seed=42`, 100 positions simulées avec `seed=1`) : erreur médiane Cell-ID ≈ **3,4 km** — ordre de
+grandeur plausible pour un positionnement Cell-ID en zone rurale à faible densité de tours, à
+comparer plus tard aux résultats TOA/Wi-Fi/IP dans le tableau comparatif du rapport final.
+
+**Tests** : découpage Sutherland-Hodgman (polygone débordant, entièrement intérieur, entièrement
+extérieur → vide), centroïde de polygone (carré unité, dégénéré à 2 points, dégénéré à 3 points
+colinéaires — aire nulle), le cas carré vérifié à la main ci-dessus, estimation à partir de
+centroïdes précalculés ou recalculés, reproductibilité par seed de `evaluate_accuracy`.
+
+**Résultats de test** : 11 nouveaux tests (26 au total pour `module_c`), tous verts. Couverture
+`cell_id.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
