@@ -58,6 +58,47 @@ def get_delivery_status(sid: str, client: Client | None = None) -> SmsStatus:
     return SmsStatus(sid=message.sid, status=message.status, error_code=message.error_code, date_updated=message.date_updated)
 
 
+def _verify_service_sid() -> str:
+    service_sid = os.environ.get("TWILIO_VERIFY_SERVICE_SID")
+    if not service_sid:
+        raise RuntimeError("TWILIO_VERIFY_SERVICE_SID not set — required to call the Twilio Verify API")
+    return service_sid
+
+
+@dataclass
+class VerificationResult:
+    sid: str
+    status: str
+    to: str
+    channel: str
+
+
+@dataclass
+class VerificationCheckResult:
+    status: str
+    valid: bool
+
+
+def start_verification(to: str, channel: str = "sms", client: Client | None = None) -> VerificationResult:
+    """Send a real OTP via the Twilio Verify API.
+
+    Trial accounts reject arbitrary ``messages.create(body=...)`` content
+    (error 60409, "Custom message did not match any template" — see
+    REPORT.md); Verify sidesteps this because its SMS body is Twilio's own
+    fixed OTP template, never customer-supplied text.
+    """
+    client = client or _client()
+    verification = client.verify.v2.services(_verify_service_sid()).verifications.create(to=to, channel=channel)
+    return VerificationResult(sid=verification.sid, status=verification.status, to=verification.to, channel=verification.channel)
+
+
+def check_verification(to: str, code: str, client: Client | None = None) -> VerificationCheckResult:
+    """Check an OTP code the recipient received via ``start_verification`` against the Verify API."""
+    client = client or _client()
+    check = client.verify.v2.services(_verify_service_sid()).verification_checks.create(to=to, code=code)
+    return VerificationCheckResult(status=check.status, valid=check.valid)
+
+
 def handle_status_webhook(payload: dict) -> SmsStatus:
     """Normalize a Twilio status-callback POST body (form fields as a dict) into an ``SmsStatus``.
 

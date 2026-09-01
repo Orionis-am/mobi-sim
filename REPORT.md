@@ -549,6 +549,46 @@ réseau — `manual_twilio_check.py` couvre ça, à la demande seulement.
 `manual_whisper_check.py` en Module A — n'affecte pas le seuil global du projet, 95 % tous modules
 confondus).
 
+### Complément — envoi réel bloqué par la politique de template trial + contournement via Verify API
+
+**Constat en exécutant `manual_twilio_check.py`** : Twilio a durci sa politique SMS trial depuis
+l'écriture de `twilio_client.py` — `messages.create(body=...)` avec un texte libre échoue désormais
+systématiquement sur un compte trial avec `HTTP 400 : Invalid template name. Trial accounts can
+only use predefined SMS templates.` (erreur Twilio 60409). Les comptes trial ne peuvent plus
+envoyer que l'un d'une dizaine de templates de contenu prédéfinis (`sms_2fa`,
+`sms_appointment_reminders`, etc.), dont le texte exact n'est publié nulle part dans la doc
+publique Twilio — seulement visible, par compte, dans la Console. C'est une contrainte réelle
+absente de la simulation (`entities.Smsc` n'a aucune notion de « contenu autorisé ») : un premier
+exemple concret et mesuré d'écart sim/réel pour §8 Q2, découvert sans avoir eu à le construire
+artificiellement, même esprit que la dérive Whisper trouvée en Module A.
+
+**Contournement retenu — Twilio Verify plutôt qu'upgrade payant** : `docs/SUJET.md` §3 MOD-B cite
+déjà « Optionnel : Twilio Verify... pour un OTP SMS ». Le corps du SMS envoyé par Verify est généré
+par Twilio lui-même (code OTP), jamais du texte fourni par l'appelant — il échappe donc
+structurellement à la restriction de template (qui ne s'applique qu'à `messages.create`). Deux
+fonctions ajoutées à `twilio_client.py`, même schéma d'injection de `client` que le reste du
+fichier :
+- `start_verification(to, channel="sms", client=None) -> VerificationResult` — enveloppe
+  `client.verify.v2.services(service_sid).verifications.create(...)`.
+- `check_verification(to, code, client=None) -> VerificationCheckResult` — enveloppe
+  `client.verify.v2.services(service_sid).verification_checks.create(...)`.
+
+Nécessite un Verify Service (ressource Twilio distincte du compte, créée une seule fois via
+`client.verify.v2.services.create(friendly_name=...)`, gratuite) — son SID va dans
+`TWILIO_VERIFY_SERVICE_SID`, ajouté à `.env`/`.env.example` (même raisonnement d'omission du sujet
+que `TWILIO_TEST_TO_NUMBER`).
+
+**`manual_twilio_verify_check.py`** : nouveau script manuel, même statut hors-pytest que
+`manual_twilio_check.py`. Sans argument, démarre une vérification (envoie l'OTP réel) ; appelé avec
+un code en argument, le vérifie — scindé en deux invocations plutôt qu'un `input()` bloquant, pour
+rester utilisable depuis un terminal piloté par un agent aussi bien qu'à la main.
+
+**Tests** : fakes Verify (`FakeVerification`, `FakeVerificationsResource`,
+`FakeVerificationCheck`, `FakeVerificationChecksResource`, `FakeVerifyService`,
+`FakeServicesResource`, `FakeVerifyV2`, `FakeVerify`) composés dans `FakeTwilioClient.verify.v2`,
+même principe de forme-exacte-du-SDK que les fakes Messages. 5 nouveaux tests (68 au total),
+tous verts. Couverture `twilio_client.py` : toujours **100 %**.
+
 ### `compare.py`
 
 **Choix** : trois fonctions, aucune ne code en dur les causes de l'écart sim/réel — c'est la
@@ -568,7 +608,7 @@ matière du rapport final (§8 Q2 du sujet : « ≥3 causes structurelles »), p
 réutiliser `measure_real_delivery` plutôt que dupliquer sa propre boucle de polling — la logique
 de mesure temporelle n'existe plus qu'à un seul endroit.
 
-**Résultats de test** : 5 nouveaux tests (68 au total), tous verts, y compris un test d'horloge
+**Résultats de test** : 5 nouveaux tests (73 au total), tous verts, y compris un test d'horloge
 factice (`sleep()` avance le temps simulé et fait progresser le statut du message factice —
 aucune vraie attente) couvrant à la fois le cas « livré après un poll » et le cas « timeout sans
 statut terminal ». Couverture `compare.py` : **100 %**.
@@ -606,10 +646,11 @@ est du Python/NumPy pur et bon marché — `routing_fitness` est donc un simple 
 `codec_fitness` par cohérence : la reproductibilité entre appels reste la responsabilité de
 l'appelant (Module F), pas fixée ici.
 
-**Résultats de test** : 7 nouveaux tests (75 au total pour `module_b`), tous verts. Couverture
-`fitness.py` : **100 %**. Couverture globale `module_b` à ce stade : **98 %** (seuls
-`pdu.gsm7_decode`'s branche d'erreur et `manual_twilio_check.py`, jamais exercé par pytest par
-conception, restaient non couverts).
+**Résultats de test** : 7 nouveaux tests (80 au total pour `module_b`), tous verts. Couverture
+`fitness.py` : **100 %**. Couverture globale `module_b` à ce stade : **96 %** (seuls
+`pdu.gsm7_decode`'s branche d'erreur et les deux scripts manuels `manual_twilio_check.py`/
+`manual_twilio_verify_check.py`, jamais exercés par pytest par conception, restaient non
+couverts).
 
 ### Complément — couverture de `gsm7_decode`
 
@@ -619,10 +660,11 @@ conception, restaient non couverts).
 `test_decode_unsupported_septet_raises`, qui vérifie que décoder `[0x1B]` (le code d'échappement de
 la table d'extension, explicitement absent de `_GSM7_CHARS`) lève bien `ValueError`.
 
-**Résultats de test** : 1 nouveau test (76 au total pour `module_b`), tous verts. Couverture
-`pdu.py` : **100 %**. Couverture globale `module_b` : **98 %**, `manual_twilio_check.py` restant à
-0 % par conception (script manuel, jamais exercé par pytest) — c'est désormais la seule ligne non
-couverte du module.
+**Résultats de test** : 1 nouveau test (81 au total pour `module_b`, en comptant aussi les 5 tests
+Verify de la section précédente), tous verts. Couverture `pdu.py` : **100 %**. Couverture globale
+`module_b` : **96 %**, `manual_twilio_check.py` et `manual_twilio_verify_check.py` restant à 0 %
+par conception (scripts manuels, jamais exercés par pytest) — ce sont désormais les deux seuls
+fichiers non couverts du module.
 
 ---
 
@@ -630,9 +672,11 @@ couverte du module.
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
 Module B est complet côté code et tests (tous les fichiers de `docs/SUJET.md` §3 implémentés et
-testés, 98 % de couverture — 100 % hors `manual_twilio_check.py`, non exercé par pytest par
-conception) — reste en attente : un envoi SMS réel via `manual_twilio_check.py` (script prêt,
-pas encore exécuté, nécessite confirmation explicite avant tout envoi réel — cf. précédent
-`manual_whisper_check.py` en Module A) pour peupler `compare.py` avec un vrai échantillon
-`RealDeliverySample` et documenter la comparaison sim/réel dans le rapport final (§8 Q2). Modules
-C–F, non commencés.
+testés, 96 % de couverture — 100 % hors les deux scripts manuels `manual_twilio_check.py`/
+`manual_twilio_verify_check.py`, non exercés par pytest par conception) — reste en attente : un
+envoi SMS réel (script `manual_twilio_check.py` prêt mais bloqué par la politique de template SMS
+des comptes trial — erreur Twilio 60409, voir la section « Complément » de `twilio_client.py` —,
+ou son détour `manual_twilio_verify_check.py` via l'API Verify, pas encore exécuté, nécessite
+confirmation explicite avant tout envoi réel — cf. précédent `manual_whisper_check.py` en Module A)
+pour peupler `compare.py` avec un vrai échantillon `RealDeliverySample` et documenter la
+comparaison sim/réel dans le rapport final (§8 Q2). Modules C–F, non commencés.

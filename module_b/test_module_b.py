@@ -380,9 +380,72 @@ class FakeMessagesResource:
         return FakeMessageContext(self._messages[sid])
 
 
+class FakeVerification:
+    def __init__(self, sid, to, channel, status="pending"):
+        self.sid = sid
+        self.to = to
+        self.channel = channel
+        self.status = status
+
+
+class FakeVerificationsResource:
+    def __init__(self):
+        self._next_id = 1
+        self.create_calls: list[dict] = []
+
+    def create(self, to: str, channel: str) -> FakeVerification:
+        sid = f"VE{self._next_id:032d}"
+        self._next_id += 1
+        self.create_calls.append({"to": to, "channel": channel})
+        return FakeVerification(sid=sid, to=to, channel=channel)
+
+
+class FakeVerificationCheck:
+    def __init__(self, status, valid):
+        self.status = status
+        self.valid = valid
+
+
+class FakeVerificationChecksResource:
+    _EXPECTED_CODE = "123456"
+
+    def __init__(self):
+        self.create_calls: list[dict] = []
+
+    def create(self, to: str, code: str) -> FakeVerificationCheck:
+        self.create_calls.append({"to": to, "code": code})
+        valid = code == self._EXPECTED_CODE
+        return FakeVerificationCheck(status="approved" if valid else "pending", valid=valid)
+
+
+class FakeVerifyService:
+    def __init__(self):
+        self.verifications = FakeVerificationsResource()
+        self.verification_checks = FakeVerificationChecksResource()
+
+
+class FakeServicesResource:
+    def __init__(self):
+        self._services: dict[str, FakeVerifyService] = {}
+
+    def __call__(self, sid: str) -> FakeVerifyService:
+        return self._services.setdefault(sid, FakeVerifyService())
+
+
+class FakeVerifyV2:
+    def __init__(self):
+        self.services = FakeServicesResource()
+
+
+class FakeVerify:
+    def __init__(self):
+        self.v2 = FakeVerifyV2()
+
+
 class FakeTwilioClient:
     def __init__(self):
         self.messages = FakeMessagesResource()
+        self.verify = FakeVerify()
 
 
 class TestSendSms:
@@ -445,6 +508,43 @@ class TestHandleStatusWebhook:
         payload = {"MessageSid": "SM123", "MessageStatus": "failed", "ErrorCode": "30006"}
         status = twilio_client.handle_status_webhook(payload)
         assert status.error_code == 30006
+
+
+class TestStartVerification:
+    def test_sends_and_returns_result(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_VERIFY_SERVICE_SID", "VAtest")
+        client = FakeTwilioClient()
+        result = twilio_client.start_verification("+15551234567", client=client)
+
+        assert result.status == "pending"
+        assert result.to == "+15551234567"
+        assert result.channel == "sms"
+        assert client.verify.v2.services("VAtest").verifications.create_calls == [{"to": "+15551234567", "channel": "sms"}]
+
+    def test_missing_service_sid_raises(self, monkeypatch):
+        monkeypatch.delenv("TWILIO_VERIFY_SERVICE_SID", raising=False)
+        with pytest.raises(RuntimeError):
+            twilio_client.start_verification("+15551234567", client=FakeTwilioClient())
+
+
+class TestCheckVerification:
+    def test_correct_code_is_valid(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_VERIFY_SERVICE_SID", "VAtest")
+        client = FakeTwilioClient()
+        result = twilio_client.check_verification("+15551234567", "123456", client=client)
+        assert result.valid is True
+        assert result.status == "approved"
+
+    def test_wrong_code_is_invalid(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_VERIFY_SERVICE_SID", "VAtest")
+        client = FakeTwilioClient()
+        result = twilio_client.check_verification("+15551234567", "000000", client=client)
+        assert result.valid is False
+
+    def test_missing_service_sid_raises(self, monkeypatch):
+        monkeypatch.delenv("TWILIO_VERIFY_SERVICE_SID", raising=False)
+        with pytest.raises(RuntimeError):
+            twilio_client.check_verification("+15551234567", "123456", client=FakeTwilioClient())
 
 
 # --- compare ---------------------------------------------------------------
