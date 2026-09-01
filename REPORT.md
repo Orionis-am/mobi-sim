@@ -828,6 +828,42 @@ centroïdes précalculés ou recalculés, reproductibilité par seed de `evaluat
 **Résultats de test** : 11 nouveaux tests (26 au total pour `module_c`), tous verts. Couverture
 `cell_id.py` : **100 %**.
 
+### `toa.py`
+
+**Choix — trilatération TOA** (spec ligne 192-193) : le sujet précise le modèle de délai
+(`distance / vitesse lumière + bruit gaussien`) et le solveur (`scipy.optimize.minimize`, SLSQP)
+mais pas la fonction objectif elle-même — choix naturel : minimiser la somme des carrés des
+résidus entre distances mesurées (dérivées des pseudo-délais) et distances hypothétiques aux BTS
+ancres.
+- `_nearest_anchors(true_xy, terrain, k)` — sélectionne les `k` BTS réelles les plus proches
+  (défaut `k=4`, plafonné au nombre de BTS disponibles).
+- `simulate_pseudoranges(true_xy, anchors_xy, timing_noise_std_s, rng)` — délai = distance / c,
+  bruit gaussien sur le délai (défaut σ=50 ns, soit ~15 m de bruit de portée à 1σ — ordre de
+  grandeur plausible pour un positionnement type TOA/GPS), reconverti en distance ; délais négatifs
+  écrêtés à 0 (non physiques).
+- `trilaterate(anchors_xy, measured_distances, initial_guess=None)` — SLSQP minimisant
+  `Σ(‖x − ancre_i‖ − distance_mesurée_i)²`, point de départ = centroïde des ancres par défaut.
+- `estimate_position` / `evaluate_accuracy` — mêmes contrats que `cell_id.py` (même signature
+  `evaluate_accuracy(terrain, n_positions=100, seed=None) -> {"median_error_m", "errors_m"}`) pour
+  rester directement comparables dans le tableau récapitulatif du rapport final. Visualiser les
+  cercles de portée reste le rôle de `map_viz.py`, pas de ce fichier.
+
+**Vérifié à la main** : 4 ancres aux coins d'un carré 100×100, bruit nul — `trilaterate` retrouve
+exactement la position vraie `(40, 60)` à `1e-3` près (`test_recovers_position_exactly_with_zero_noise`).
+
+**Résultat sur données réelles** (mêmes 500 BTS Aveyron et mêmes seeds que Cell-ID ci-dessus) :
+erreur médiane TOA ≈ **19 m**, contre ≈ 3,4 km pour Cell-ID — l'écart de précision attendu entre
+une estimation "cellule la plus proche" et une vraie trilatération, exactement ce que le tableau
+comparatif du rapport final (§8) doit mettre en évidence.
+
+**Tests** : sélection des k plus proches ancres (plafonnée au nombre de BTS disponibles), bruit nul
+→ distance exacte, bruit non nul perturbe la mesure, trilatération exacte à bruit nul (à la main),
+point de départ explicite, précision raisonnable avec bruit réaliste, forme et reproductibilité de
+`evaluate_accuracy`.
+
+**Résultats de test** : 9 nouveaux tests (35 au total pour `module_c`), tous verts. Couverture
+`toa.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

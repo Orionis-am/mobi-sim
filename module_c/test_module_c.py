@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from module_c import cell_id, opencellid_loader, terrain_sim
+from module_c import cell_id, opencellid_loader, terrain_sim, toa
 
 # --- opencellid_loader -------------------------------------------------------
 
@@ -200,7 +200,7 @@ class TestEstimatePosition:
         np.testing.assert_allclose(estimate, [7.5, 7.5], atol=1e-6)
 
 
-class TestEvaluateAccuracy:
+class TestCellIdEvaluateAccuracy:
     def test_returns_finite_median_and_matching_error_count(self):
         result = cell_id.evaluate_accuracy(_square_terrain(), n_positions=50, seed=0)
         assert result["median_error_m"] >= 0.0
@@ -209,4 +209,77 @@ class TestEvaluateAccuracy:
     def test_seed_reproducibility(self):
         a = cell_id.evaluate_accuracy(_square_terrain(), n_positions=20, seed=7)
         b = cell_id.evaluate_accuracy(_square_terrain(), n_positions=20, seed=7)
+        assert a["median_error_m"] == pytest.approx(b["median_error_m"])
+
+
+# --- toa -----------------------------------------------------------------
+
+
+def _corner_terrain() -> terrain_sim.Terrain:
+    # 4 corners of a 100x100 square + 1 center BTS — enough anchors for well-conditioned trilateration.
+    df = pd.DataFrame({"x": [0.0, 100.0, 0.0, 100.0, 50.0], "y": [0.0, 0.0, 100.0, 100.0, 50.0]})
+    return terrain_sim.Terrain(bts=df, lon0=0.0, lat0=0.0)
+
+
+class TestNearestAnchors:
+    def test_selects_k_closest_by_distance(self):
+        terrain = terrain_sim.Terrain(bts=pd.DataFrame({"x": [0.0, 10.0, 20.0, 30.0], "y": [0.0, 0.0, 0.0, 0.0]}), lon0=0.0, lat0=0.0)
+        anchors = toa._nearest_anchors(np.array([1.0, 0.0]), terrain, k=2)
+        assert sorted(anchors[:, 0].tolist()) == [0.0, 10.0]
+
+    def test_caps_k_at_available_bts(self):
+        terrain = terrain_sim.Terrain(bts=pd.DataFrame({"x": [0.0, 10.0], "y": [0.0, 0.0]}), lon0=0.0, lat0=0.0)
+        anchors = toa._nearest_anchors(np.array([0.0, 0.0]), terrain, k=5)
+        assert len(anchors) == 2
+
+
+class TestSimulatePseudoranges:
+    def test_zero_noise_matches_true_distance(self):
+        anchors = np.array([[0.0, 0.0], [100.0, 0.0]])
+        true_xy = np.array([30.0, 40.0])
+        measured = toa.simulate_pseudoranges(true_xy, anchors, timing_noise_std_s=0.0)
+        expected = np.linalg.norm(anchors - true_xy, axis=1)
+        np.testing.assert_allclose(measured, expected, atol=1e-6)
+
+    def test_noise_perturbs_distance(self):
+        anchors = np.array([[0.0, 0.0]])
+        true_xy = np.array([100.0, 0.0])
+        rng = np.random.default_rng(0)
+        measured = toa.simulate_pseudoranges(true_xy, anchors, timing_noise_std_s=50e-9, rng=rng)
+        assert measured[0] != pytest.approx(100.0)
+
+
+class TestTrilaterate:
+    def test_recovers_position_exactly_with_zero_noise(self):
+        anchors = np.array([[0.0, 0.0], [100.0, 0.0], [0.0, 100.0], [100.0, 100.0]])
+        true_xy = np.array([40.0, 60.0])
+        measured = np.linalg.norm(anchors - true_xy, axis=1)
+        estimate = toa.trilaterate(anchors, measured)
+        np.testing.assert_allclose(estimate, true_xy, atol=1e-3)
+
+    def test_accepts_explicit_initial_guess(self):
+        anchors = np.array([[0.0, 0.0], [100.0, 0.0], [0.0, 100.0], [100.0, 100.0]])
+        true_xy = np.array([40.0, 60.0])
+        measured = np.linalg.norm(anchors - true_xy, axis=1)
+        estimate = toa.trilaterate(anchors, measured, initial_guess=np.array([50.0, 50.0]))
+        np.testing.assert_allclose(estimate, true_xy, atol=1e-3)
+
+
+class TestToaEstimatePosition:
+    def test_reasonably_close_to_true_position(self):
+        terrain = _corner_terrain()
+        rng = np.random.default_rng(1)
+        estimate = toa.estimate_position(np.array([40.0, 60.0]), terrain, k=4, timing_noise_std_s=1e-9, rng=rng)
+        assert np.linalg.norm(estimate - np.array([40.0, 60.0])) < 50.0
+
+
+class TestToaEvaluateAccuracy:
+    def test_returns_finite_median_and_matching_error_count(self):
+        result = toa.evaluate_accuracy(_corner_terrain(), n_positions=20, seed=0)
+        assert result["median_error_m"] >= 0.0
+        assert len(result["errors_m"]) == 20
+
+    def test_seed_reproducibility(self):
+        a = toa.evaluate_accuracy(_corner_terrain(), n_positions=10, seed=5)
+        b = toa.evaluate_accuracy(_corner_terrain(), n_positions=10, seed=5)
         assert a["median_error_m"] == pytest.approx(b["median_error_m"])
