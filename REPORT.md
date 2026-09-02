@@ -1061,6 +1061,44 @@ cohérent avec `bts_coverage_fitness_components`, mise en cache du terrain par d
 **Résultats de test** : 19 nouveaux tests (94 au total pour `module_c`), tous verts. Couverture
 `fitness.py` : **100 %**.
 
+---
+
+## Module D — QoS/QoE (modèle E ITU-T G.107, mesures STUN, dashboard Rich)
+
+### `model_e.py`
+
+**Contexte** : le sujet donne le squelette du facteur R (`R = R0 − Is − Id − Ie + A`, `R0=93.2`,
+`A=10`, table `Ie` par codec ≈ {GSM:20, AAC:25, Opus:7}) mais ne donne ni la formule de `Id`
+(délai), ni celle de `Ie` effectif (perte de paquets), ni la conversion `R → MOS` — seulement
+« conversion par formule ITU-T ». Plutôt qu'inventer ces formules, ce fichier utilise les formules
+standard, publiées ITU-T G.107 (les mêmes que celles couramment citées par Cisco et al. pour le
+E-model simplifié) :
+
+- **`delay_impairment(delay_ms)`** — `Id = 0.024·d + 0.11·(d − 177.3)·H(d − 177.3)` (`H` = échelon
+  de Heaviside), la formule standard : linéaire jusqu'à ~177 ms, puis une pente plus forte au-delà
+  (seuil correspondant approximativement au délai à partir duquel un interlocuteur commence à
+  percevoir une gêne conversationnelle, pas un chiffre choisi arbitrairement ici).
+- **`effective_equipment_impairment(ie_base, loss_pct, bpl)`** — `Ie,eff = Ie + (95 − Ie)·Ppl/(Ppl/Bpl + 2)`,
+  la formule standard ajustée à la perte de paquets. **C'est le point d'entrée choisi pour la perte
+  de paquets dans le modèle** : la table `Ie` du sujet est plate (un seul chiffre par codec, sans
+  terme de perte), et `Is` est documenté par le sujet comme spécifique au codage/écho, pas à la
+  perte — `Ie,eff` est donc le seul levier restant, cohérent avec son usage standard ITU-T.
+  `DEFAULT_BPL = 10.0` est une constante unique (pas de valeur par codec, faute de base) —
+  hypothèse documentée, même esprit que le `DEFAULT_PACKET_LOSS_RATE` unique du Module A.
+- **`r_factor(codec, delay_ms, loss_pct, is_impairment=0.0, bpl=DEFAULT_BPL)`** — combine le tout,
+  `R` borné à `[0, 100]`. `Is` vaut `0.0` par défaut (aucun trajet d'écho n'est modélisé ailleurs
+  dans le projet) — hypothèse documentée, injectable pour un futur modèle d'écho.
+- **`r_to_mos(r)`** — mapping cubique standard ITU-T G.107 : `MOS=1` pour `R≤0`, `MOS=4.5` pour
+  `R≥100`, sinon `MOS = 1 + 0.035·R + R·(R−60)·(100−R)·7×10⁻⁶`.
+- **`mos_from_conditions(codec, delay_ms, loss_pct, ...)`** — enchaîne les deux, utilisé par tout
+  le reste du module.
+
+**Vérifié à la main** : `r_factor("opus", delay_ms=0, loss_pct=0)` = `93.2 − 0 − 0 − 7 + 10 = 96.2`
+(Ie,eff = Ie à perte nulle) ; `effective_equipment_impairment(20, 5, bpl=10)` =
+`20 + 75·5/2.5 = 170` ; `r_to_mos(93.2)` ≈ `4.409286`.
+
+**Résultats de test** : 24 tests, tous verts. Couverture `model_e.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1082,5 +1120,7 @@ près de Rodez, voir la section `lbs_poi.py` ci-dessus) et `manual_ipinfo_check.
 la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.py` ci-dessus). Rien
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
-(`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Modules D–F, non
+(`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
+cours : `model_e.py` (modèle E ITU-T G.107) fait, restent `stun_probe.py`, `session_sim.py`,
+`dashboard.py`, `correlation.py`, `fitness.py`, `manual_stun_check.py`. Modules E–F, non
 commencés.
