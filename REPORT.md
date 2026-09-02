@@ -932,10 +932,13 @@ champ `loc` absent, jeton manquant lève une erreur, jeton explicite prioritaire
 statut HTTP d'erreur propage `requests.HTTPError`.
 
 **`manual_ipinfo_check.py`** : script manuel non exécuté par pytest, même schéma que
-`manual_twilio_check.py`/`manual_nominatim_check.py` (à venir). **Pas encore exécutable pour de
-vrai** : `IPINFO_TOKEN` dans `.env` est toujours la valeur de remplissage `xxxxxxxxxx`, pas un
-jeton réel — même situation que Twilio avant la dernière session de travail. En attente que
-l'utilisateur crée un compte gratuit sur ipinfo.io.
+`manual_twilio_check.py`/`manual_nominatim_check.py`.
+
+**Résultat de l'exécution réelle (2026-09-02)**, une fois `IPINFO_TOKEN` renseigné avec un vrai
+jeton (compte gratuit ipinfo.io) : géolocalisation de l'IP publique de la machine résolue en
+`Toulouse, Occitanie, FR` (`lat=43.6043, lon=1.4437`) — cohérent avec la localisation réelle de
+l'étudiant, à l'échelle de la ville comme attendu (cf. discussion granularité ci-dessus). Aucune
+erreur, jeton lu depuis `.env` via `load_dotenv()` sans avoir besoin d'être passé explicitement.
 
 **Résultats de test** : 7 nouveaux tests (54 au total pour `module_c`), tous verts. Couverture
 `ipinfo_client.py` : **100 %** ; `manual_ipinfo_check.py` à 0 % par conception (jamais exercé par
@@ -1074,9 +1077,10 @@ aussi s'appuyer sur les deux contraintes trial découvertes au passage (politiqu
 l'écart. Rien ne reste en attente pour Module B. Module C est complet côté code et tests : tous les
 fichiers de `docs/SUJET.md` §3 implémentés et testés (94 tests, 96 % de couverture — 100 % hors les
 deux scripts manuels `manual_ipinfo_check.py`/`manual_nominatim_check.py`, non exercés par pytest
-par conception). `manual_nominatim_check.py` exécuté avec succès (10 POI réels près de Rodez, voir
-la section `lbs_poi.py` ci-dessus) ; reste en attente, non bloquant : `manual_ipinfo_check.py`,
-prêt mais nécessitant un vrai `IPINFO_TOKEN` (le `.env` actuel n'a que la valeur de remplissage
-`xxxxxxxxxx` ; compte gratuit à créer sur ipinfo.io). Tableau comparatif Cell-ID/TOA/Wi-Fi/IP et
-carte Folium démonstrative (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module
-C 2-3 p.). Modules D–F, non commencés.
+par conception), et validés contre les deux vraies API : `manual_nominatim_check.py` (10 POI réels
+près de Rodez, voir la section `lbs_poi.py` ci-dessus) et `manual_ipinfo_check.py` (IP publique de
+la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.py` ci-dessus). Rien
+ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
+bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
+(`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Modules D–F, non
+commencés.
