@@ -1183,6 +1183,34 @@ socket créé en interne, perte partielle reflétée dans les lignes suivantes, 
 `dashboard.py` : **100 %**. Dépendance ajoutée : `rich` (`uv add rich`), seule nouvelle dépendance
 du Module D.
 
+### `correlation.py`
+
+**Choix — réutilisation directe de `module_a.visualize.plot_correlation_matrix`, pas de
+réimplémentation** (spec ligne 241-243) : cette fonction est déjà générique sur n'importe quel
+mapping `{label: {métrique: valeur}}` (documenté explicitement dans son propre docstring en
+Module A) — `module_d.correlation.plot_correlation_matrix` est un simple alias vers la fonction
+du Module A plutôt qu'une copie. Seule imperfection assumée : le titre de la heatmap reste
+« Corrélation PESQ × MUSHRA × WER » même une fois la clé `"mos"` ajoutée — défaut cosmétique
+connu, pas jugé suffisant pour justifier une modification du Module A (déjà complet et testé)
+depuis une commande du Module D.
+- `build_correlation_table(pesq_by_codec, wer_by_codec, mushra_summary, mos_by_codec)` — appelle
+  `module_a.visualize.build_correlation_table` (fusion PESQ/WER/MUSHRA existante) puis y ajoute la
+  clé `"mos"` par codec.
+
+**Choix — seuils R annotés en MOS, pas en R** (spec ligne 231-232 : « Seuils annotés : R < 60
+(insatisfaisant), 60-80 (acceptable), > 80 (bon) ») : l'axe des ordonnées des deux courbes est en
+MOS, pas en R — les seuils sont donc convertis via `model_e.r_to_mos(60)`/`r_to_mos(80)` avant
+d'être tracés en lignes horizontales, plutôt que de changer l'axe pour du R brut (le MOS est ce
+que le sujet demande de tracer explicitement, « Tracer MOS = f(délai)... »).
+- `plot_mos_vs_delay(codecs, delay_range_ms, loss_pct=0.0)` / `plot_mos_vs_loss(codecs,
+  loss_range_pct, delay_ms=0.0)` — une courbe par codec (AAC/GSM/Opus), seuils R annotés,
+  bornes MOS `[1.0, 4.5]` fixes sur l'axe Y pour rester comparables entre les deux figures.
+
+**Résultats de test** : 6 nouveaux tests (61 au total pour `module_d`), tous verts, dont un test
+d'identité (`plot_correlation_matrix is module_a.visualize.plot_correlation_matrix`, pas une
+copie) et une décroissance du MOS avec le délai/la perte pour chaque courbe. Couverture
+`correlation.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1205,5 +1233,5 @@ la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.p
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
 (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py` faits, restent
-`correlation.py`, `fitness.py`, `manual_stun_check.py`. Modules E–F, non commencés.
+cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py`, `correlation.py` faits,
+restent `fitness.py`, `manual_stun_check.py`. Modules E–F, non commencés.

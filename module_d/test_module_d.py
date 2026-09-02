@@ -14,10 +14,17 @@ import io
 import socket
 import struct
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless: these tests must never pop up a GUI window
+
+import numpy as np
 import pytest
+from matplotlib.figure import Figure
 from rich.console import Console
 
-from module_d import dashboard, model_e, session_sim, stun_probe
+from module_a import visualize as a_visualize
+from module_d import correlation, dashboard, model_e, session_sim, stun_probe
 
 # --- model_e -----------------------------------------------------------------
 
@@ -354,3 +361,50 @@ class TestRunDashboard:
             n_iterations=3, csv_path=tmp_path / "out.csv", sock=FakeStunSocket(), sleep=sleep_calls.append, console=_silent_console()
         )
         assert len(sleep_calls) == 2
+
+
+# --- correlation -----------------------------------------------------------------
+
+
+class TestBuildCorrelationTable:
+    def test_merges_pesq_wer_mushra_and_mos(self):
+        pesq = {"aac": 4.0, "gsm": 3.5}
+        wer = {"aac": 0.1, "gsm": 0.2}
+        mushra = {"aac": {"english": {"mean": 40.0}}, "gsm": {"english": {"mean": 50.0}}}
+        mos = {"aac": 3.0, "gsm": 3.2}
+        table = correlation.build_correlation_table(pesq, wer, mushra, mos)
+        assert table == {
+            "aac": {"pesq": 4.0, "wer": 0.1, "mushra": 40.0, "mos": 3.0},
+            "gsm": {"pesq": 3.5, "wer": 0.2, "mushra": 50.0, "mos": 3.2},
+        }
+
+
+class TestPlotCorrelationMatrixReuse:
+    def test_is_module_a_visualize_function(self):
+        assert correlation.plot_correlation_matrix is a_visualize.plot_correlation_matrix
+
+
+class TestPlotMosVsDelay:
+    def test_returns_figure_with_one_line_per_codec(self):
+        fig = correlation.plot_mos_vs_delay(codecs=("aac", "opus"), delay_range_ms=np.linspace(0, 300, 10))
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].lines) >= 2  # 2 codec lines + 2 threshold lines
+
+    def test_mos_decreases_with_delay(self):
+        fig = correlation.plot_mos_vs_delay(codecs=("opus",), delay_range_ms=np.linspace(0, 300, 10))
+        line = fig.axes[0].lines[0]
+        y = line.get_ydata()
+        assert y[0] > y[-1]
+
+
+class TestPlotMosVsLoss:
+    def test_returns_figure_with_one_line_per_codec(self):
+        fig = correlation.plot_mos_vs_loss(codecs=("aac", "opus"), loss_range_pct=np.linspace(0, 20, 10))
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].lines) >= 2
+
+    def test_mos_decreases_with_loss(self):
+        fig = correlation.plot_mos_vs_loss(codecs=("gsm",), loss_range_pct=np.linspace(0, 20, 10))
+        line = fig.axes[0].lines[0]
+        y = line.get_ydata()
+        assert y[0] > y[-1]
