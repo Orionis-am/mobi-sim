@@ -1099,6 +1099,39 @@ E-model simplifié) :
 
 **Résultats de test** : 24 tests, tous verts. Couverture `model_e.py` : **100 %**.
 
+### `stun_probe.py`
+
+**Choix — STUN via `socket` stdlib, pas de librairie tierce** (spec ligne 234-239, conforme à
+`docs/SUJET.md` §1.2 : `stun.l.google.com:19302`, libre d'accès, sans inscription) : construction
+manuelle du paquet RFC 5389 (en-tête 20 octets : type `0x0001` Binding Request, longueur `0x0000`,
+cookie magique `0x2112A442`, ID de transaction 96 bits aléatoire via `os.urandom(12)`) et parsing
+manuel de la réponse (`0x0101` Binding Success Response, cookie + ID de transaction assortis).
+`measure_one_rtt` chronomètre l'aller-retour avec `time.perf_counter()` ; `sock` injectable, même
+principe que `session`/`client` en Module C/B.
+
+**Choix — taux de perte mesuré, pas injecté** : le sujet demande un « taux de perte simulé sur 20
+mesures ». Plutôt que d'ajouter un paramètre de probabilité de perte synthétique arbitraire (un
+degré de liberté supplémentaire sans base réelle), le taux de perte de `measure_rtt_jitter` est
+directement la fraction des 20 requêtes UDP réelles qui expirent ou échouent à parser — un vrai
+aller-retour UDP vers un vrai serveur produit déjà de la vraie perte dans des conditions réelles.
+Un taux de perte totalement contrôlable pour la courbe MOS=f(perte) exigée par le sujet est géré
+séparément, directement par `correlation.py`/`session_sim.py` (appel direct à `model_e` avec un
+`loss_pct` balayé arbitrairement), sans dépendre de ce que `stun_probe` mesure réellement à
+l'instant T.
+
+**Tests** : `FakeStunSocket` (même principe que `FakeIpinfoSession`/`FakeOverpassSession` en
+Module C) — écho d'une réponse Binding Success valide reconstruite à partir de l'ID de transaction
+du dernier paquet envoyé, avec possibilité de simuler un timeout à des indices d'appel choisis.
+Couvre : en-tête du paquet de requête, ID de transaction aléatoire à chaque appel, validation de
+réponse (assortie / ID différent / mauvais type / trop courte), RTT positif sur réponse valide,
+`None` sur timeout et sur réponse invalide (garbage), comptage correct de la perte sur des pertes
+partielles/totales, non-fermeture d'un socket injecté vs. fermeture d'un socket créé en interne
+(vérifié en monkeypatchant `socket.socket` pour éviter tout vrai trafic réseau dans la suite
+pytest).
+
+**Résultats de test** : 14 nouveaux tests (38 au total pour `module_d`), tous verts. Couverture
+`stun_probe.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1121,6 +1154,6 @@ la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.p
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
 (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py` (modèle E ITU-T G.107) fait, restent `stun_probe.py`, `session_sim.py`,
-`dashboard.py`, `correlation.py`, `fitness.py`, `manual_stun_check.py`. Modules E–F, non
-commencés.
+cours : `model_e.py` (modèle E ITU-T G.107) et `stun_probe.py` (mesures STUN réelles) faits,
+restent `session_sim.py`, `dashboard.py`, `correlation.py`, `fitness.py`, `manual_stun_check.py`.
+Modules E–F, non commencés.

@@ -9,9 +9,12 @@ access required to run this file.
 
 from __future__ import annotations
 
+import socket
+import struct
+
 import pytest
 
-from module_d import model_e
+from module_d import model_e, stun_probe
 
 # --- model_e -----------------------------------------------------------------
 
@@ -115,3 +118,122 @@ class TestMosFromConditions:
         mos_gsm = model_e.mos_from_conditions("gsm", delay_ms=50.0, loss_pct=0.0)
         mos_aac = model_e.mos_from_conditions("aac", delay_ms=50.0, loss_pct=0.0)
         assert mos_opus > mos_gsm > mos_aac
+
+
+# --- stun_probe ----------------------------------------------------------------
+
+
+class FakeStunSocket:
+    """Echoes a valid Binding Success Response for whatever request was last sent.
+
+    `timeout_at_indices` makes the recvfrom call at those 0-based call indices raise
+    socket.timeout instead, simulating loss without any real network I/O.
+    """
+
+    def __init__(self, timeout_at_indices: set[int] | None = None):
+        self.timeout_at_indices = timeout_at_indices or set()
+        self.sent: list[bytes] = []
+        self.closed = False
+        self._call_count = 0
+
+    def settimeout(self, timeout_s):
+        self.timeout_s = timeout_s
+
+    def sendto(self, data, addr):
+        self.sent.append(data)
+
+    def recvfrom(self, bufsize):
+        idx = self._call_count
+        self._call_count += 1
+        if idx in self.timeout_at_indices:
+            raise socket.timeout("simulated timeout")
+        txn_id = stun_probe.transaction_id(self.sent[-1])
+        response = struct.pack(">HHI12s", stun_probe.BINDING_SUCCESS_RESPONSE, 0, stun_probe.MAGIC_COOKIE, txn_id)
+        return response, ("127.0.0.1", stun_probe.DEFAULT_PORT)
+
+    def close(self):
+        self.closed = True
+
+
+class TestBuildBindingRequest:
+    def test_has_correct_header_fields(self):
+        packet = stun_probe.build_binding_request()
+        msg_type, length, cookie = struct.unpack(">HHI", packet[:8])
+        assert msg_type == stun_probe.BINDING_REQUEST
+        assert length == 0
+        assert cookie == stun_probe.MAGIC_COOKIE
+        assert len(packet) == 20
+
+    def test_transaction_id_is_random_each_call(self):
+        a = stun_probe.transaction_id(stun_probe.build_binding_request())
+        b = stun_probe.transaction_id(stun_probe.build_binding_request())
+        assert a != b
+
+
+class TestParseBindingResponse:
+    def test_valid_response_matches(self):
+        txn_id = b"0" * 12
+        data = struct.pack(">HHI12s", stun_probe.BINDING_SUCCESS_RESPONSE, 0, stun_probe.MAGIC_COOKIE, txn_id)
+        assert stun_probe.parse_binding_response(data, txn_id) is True
+
+    def test_mismatched_transaction_id_rejected(self):
+        data = struct.pack(">HHI12s", stun_probe.BINDING_SUCCESS_RESPONSE, 0, stun_probe.MAGIC_COOKIE, b"0" * 12)
+        assert stun_probe.parse_binding_response(data, b"1" * 12) is False
+
+    def test_wrong_message_type_rejected(self):
+        txn_id = b"0" * 12
+        data = struct.pack(">HHI12s", stun_probe.BINDING_REQUEST, 0, stun_probe.MAGIC_COOKIE, txn_id)
+        assert stun_probe.parse_binding_response(data, txn_id) is False
+
+    def test_too_short_rejected(self):
+        assert stun_probe.parse_binding_response(b"short", b"0" * 12) is False
+
+
+class TestMeasureOneRtt:
+    def test_valid_response_returns_nonnegative_float(self):
+        rtt = stun_probe.measure_one_rtt(FakeStunSocket())
+        assert isinstance(rtt, float)
+        assert rtt >= 0.0
+
+    def test_timeout_returns_none(self):
+        rtt = stun_probe.measure_one_rtt(FakeStunSocket(timeout_at_indices={0}))
+        assert rtt is None
+
+    def test_garbage_response_returns_none(self):
+        class GarbageSocket(FakeStunSocket):
+            def recvfrom(self, bufsize):
+                return b"not a stun packet", ("127.0.0.1", stun_probe.DEFAULT_PORT)
+
+        rtt = stun_probe.measure_one_rtt(GarbageSocket())
+        assert rtt is None
+
+
+class TestMeasureRttJitter:
+    def test_all_succeed_no_loss(self):
+        stats = stun_probe.measure_rtt_jitter(n_measurements=5, sock=FakeStunSocket())
+        assert len(stats.rtt_samples_ms) == 5
+        assert stats.loss_rate == 0.0
+        assert stats.rtt_mean_ms >= 0.0
+
+    def test_partial_timeouts_counted_as_loss(self):
+        stats = stun_probe.measure_rtt_jitter(n_measurements=5, sock=FakeStunSocket(timeout_at_indices={1, 3}))
+        assert len(stats.rtt_samples_ms) == 3
+        assert stats.loss_rate == pytest.approx(2 / 5)
+
+    def test_all_timeouts_yields_nan_stats(self):
+        stats = stun_probe.measure_rtt_jitter(n_measurements=3, sock=FakeStunSocket(timeout_at_indices={0, 1, 2}))
+        assert stats.rtt_samples_ms == []
+        assert stats.loss_rate == 1.0
+        assert stats.rtt_mean_ms != stats.rtt_mean_ms  # NaN
+
+    def test_injected_socket_is_not_closed(self):
+        fake = FakeStunSocket()
+        stun_probe.measure_rtt_jitter(n_measurements=2, sock=fake)
+        assert fake.closed is False
+
+    def test_creates_and_closes_own_socket_when_none_given(self, monkeypatch):
+        fake = FakeStunSocket()
+        monkeypatch.setattr(stun_probe.socket, "socket", lambda *a, **kw: fake)
+        stats = stun_probe.measure_rtt_jitter(n_measurements=2, sock=None)
+        assert len(stats.rtt_samples_ms) == 2
+        assert fake.closed is True
