@@ -24,7 +24,7 @@ from matplotlib.figure import Figure
 from rich.console import Console
 
 from module_a import visualize as a_visualize
-from module_d import correlation, dashboard, model_e, session_sim, stun_probe
+from module_d import correlation, dashboard, fitness, model_e, session_sim, stun_probe
 
 # --- model_e -----------------------------------------------------------------
 
@@ -408,3 +408,97 @@ class TestPlotMosVsLoss:
         line = fig.axes[0].lines[0]
         y = line.get_ydata()
         assert y[0] > y[-1]
+
+
+# --- fitness ---------------------------------------------------------------------
+
+_TEST_PROFILES = (
+    fitness.UserProfile("voip", 32.0, 3.5),
+    fitness.UserProfile("sms", 1.0, 3.0),
+)
+
+
+class TestDecodeChromosome:
+    def test_wrong_length_raises(self):
+        with pytest.raises(ValueError):
+            fitness.decode_chromosome([0.0, 32.0], profiles=_TEST_PROFILES)
+
+    @pytest.mark.parametrize(
+        "codec_raw,expected", [(0.0, "aac"), (1.0, "gsm"), (2.0, "opus"), (3.0, "aac"), (2.4, "opus")]
+    )
+    def test_codec_index_snaps_via_modulo(self, codec_raw, expected):
+        allocations = fitness.decode_chromosome([codec_raw, 10.0, 0.0, 1.0], profiles=_TEST_PROFILES)
+        assert allocations[0].codec == expected
+
+    def test_negative_bandwidth_clipped_to_zero(self):
+        allocations = fitness.decode_chromosome([0.0, -50.0, 0.0, 1.0], profiles=_TEST_PROFILES)
+        assert allocations[0].bandwidth_kbps == 0.0
+
+    def test_huge_bandwidth_clipped_to_max(self):
+        allocations = fitness.decode_chromosome([0.0, 9999.0, 0.0, 1.0], profiles=_TEST_PROFILES)
+        assert allocations[0].bandwidth_kbps == fitness.MAX_BANDWIDTH_KBPS
+
+    def test_profiles_preserved_in_order(self):
+        allocations = fitness.decode_chromosome([0.0, 10.0, 1.0, 0.5], profiles=_TEST_PROFILES)
+        assert allocations[0].profile is _TEST_PROFILES[0]
+        assert allocations[1].profile is _TEST_PROFILES[1]
+
+    def test_default_profile_count_is_ten(self):
+        assert len(fitness.DEFAULT_USER_PROFILES) == 10
+
+
+class TestQosFitnessComponents:
+    def test_returns_expected_keys_with_finite_values(self):
+        chromosome = [2.0, 32.0, 2.0, 1.0]  # both users: opus, bandwidth == required
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0)
+        expected_keys = {"mean_mos", "total_bandwidth_kbps", "capacity_violation_kbps", "min_mos_violation", "per_user_mos", "fitness"}
+        assert set(result.keys()) == expected_keys
+        assert all(np.isfinite(v) for v in result["per_user_mos"])
+        assert np.isfinite(result["fitness"])
+
+    def test_no_capacity_violation_when_under_capacity(self):
+        chromosome = [2.0, 10.0, 2.0, 0.5]
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0)
+        assert result["capacity_violation_kbps"] == 0.0
+
+    def test_capacity_violation_positive_when_over_capacity(self):
+        chromosome = [2.0, 32.0, 2.0, 1.0]
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=5.0)
+        assert result["capacity_violation_kbps"] == pytest.approx(33.0 - 5.0)
+
+    def test_min_mos_violation_zero_when_generously_provisioned(self):
+        # low min_mos thresholds so a well-provisioned allocation clears them regardless of the
+        # small amount of noise simulate_session adds on top of the congestion-driven loss
+        lenient_profiles = (fitness.UserProfile("voip", 32.0, 1.0), fitness.UserProfile("sms", 1.0, 1.0))
+        chromosome = [2.0, 32.0, 2.0, 1.0]  # opus, exactly the required bandwidth, low congestion
+        result = fitness.qos_fitness_components(chromosome, profiles=lenient_profiles, total_capacity_kbps=100.0, seed=1)
+        assert result["min_mos_violation"] == 0.0
+
+    def test_min_mos_violation_positive_when_starved(self):
+        chromosome = [1.0, 0.0, 1.0, 0.0]  # gsm, zero bandwidth -> full deficit
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0)
+        assert result["min_mos_violation"] > 0.0
+
+    def test_seed_reproducibility(self):
+        chromosome = [2.0, 16.0, 1.0, 0.5]
+        a = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, seed=7)
+        b = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, seed=7)
+        assert a == b
+
+    def test_fitness_matches_manual_weighted_formula(self):
+        chromosome = [2.0, 32.0, 2.0, 1.0]
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, weights=(0.8, 0.2))
+        expected = 0.8 * result["mean_mos"] - 0.2 * (result["total_bandwidth_kbps"] / 100.0)
+        assert result["fitness"] == pytest.approx(expected)
+
+
+class TestQosFitness:
+    def test_matches_components_fitness_key(self):
+        chromosome = [2.0, 32.0, 2.0, 1.0]
+        expected = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, seed=3)["fitness"]
+        actual = fitness.qos_fitness(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, seed=3)
+        assert actual == pytest.approx(expected)
+
+    def test_returns_a_float(self):
+        chromosome = [0.0] * 20
+        assert isinstance(fitness.qos_fitness(chromosome, seed=1), float)

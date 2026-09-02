@@ -1211,6 +1211,54 @@ d'identité (`plot_correlation_matrix is module_a.visualize.plot_correlation_mat
 copie) et une décroissance du MOS avec le délai/la perte pour chaque courbe. Couverture
 `correlation.py` : **100 %**.
 
+### `fitness.py`
+
+**Contexte — dernier fichier substantiel du Module D**. Expose le contrat `qos_fitness(chromosome)`
+pour le Pb3 du Module F (DE via `scipy.optimize.differential_evolution` vs. PSO via `pyswarm`,
+spec lignes 342-350) : 10 utilisateurs simultanés (profils VoIP/SMS/streaming, chacun avec une QoS
+minimale requise), chromosome `[codec_u1, bw_u1, ..., codec_u10, bw_u10]` (20 gènes), contrainte
+dure de capacité réseau totale partagée.
+
+**Écart avec le sujet, résolu comme en Module A** : le sujet dit `qos_fitness(chromosome) → MOS
+moyen` (un scalaire nu, spec ligne 243) alors que les objectifs du Pb3 sont formulés comme une
+paire `(−MOS moyen, bande totale)` (spec ligne 349). Résolu de la même façon que l'écart analogue
+du Pb1 en Module A (le terme WER) : un seul score scalaire pondéré, avec pénalité de contrainte
+dure pour tout dépassement de capacité totale, poids configurables. Le contrat reste un `float` nu
+(pas un tuple), puisque DE/PSO sont des solveurs mono-objectif — contrairement au Pb2 (`module_c
+.fitness.bts_coverage_fitness`, qui retourne bien un tuple, pour NSGA-II).
+
+**Profils utilisateurs — hypothèse documentée, faute de valeurs numériques dans le sujet** : le
+sujet nomme les types de profil (VoIP/SMS/streaming) et dit « chacun avec QoS requise (MOS
+minimum) » sans jamais donner de chiffres. `DEFAULT_USER_PROFILES` (3 VoIP à 32 kbps/MOS min 3.5,
+3 SMS à 1 kbps/MOS min 3.0, 4 streaming à 64 kbps/MOS min 3.8) sont des valeurs plausibles choisies
+et documentées, pas mesurées. `DEFAULT_TOTAL_CAPACITY_KBPS` est fixée à 70 % de la demande totale
+si tout le monde recevait exactement sa bande requise — volontairement en-dessous du besoin total,
+sinon le problème d'allocation n'a pas de vrai compromis à résoudre.
+
+**Aucun vrai appel STUN dans la boucle de fitness** : DE/PSO peuvent évaluer cette fonction des
+milliers de fois — ouvrir une socket UDP à chaque évaluation serait lent et rendrait la fitness
+non reproductible, même raisonnement que le proxy WER en Module A. `rtt_ms`/`jitter_ms` par défaut
+sont des constantes fixes documentées (`DEFAULT_BASELINE_RTT_MS=40`, `DEFAULT_BASELINE_JITTER_MS=5`,
+valeurs plausibles pour un réseau mobile), pas une mesure réelle mise en cache — **simplification
+par rapport au plan initial** : contrairement au signal de référence TTS du Module A ou au terrain
+BTS du Module C, il n'y a ici rien de coûteux à mettre en cache, donc pas de cache module-level. Un
+appelant voulant la vraie mesure sur le meilleur individu final peut simplement passer les
+`rtt_ms`/`jitter_ms` réels issus de `stun_probe.measure_rtt_jitter()` en paramètres — plus simple
+qu'une fonction `rtt_fn` injectable séparée, sans rien perdre du besoin (validation ponctuelle
+sim-vs-réel sur les meilleurs individus).
+
+**Tests** : décodage (longueur invalide lève une erreur, snapping modulo du gène codec, bande
+passante clippée aux deux bornes, profils préservés dans l'ordre), breakdown complet (clés,
+valeurs finies), absence de violation de capacité en-dessous du seuil vs. violation positive
+au-dessus (valeur exacte vérifiée), absence de violation de MOS minimum quand généreusement
+approvisionné (seeded, seuils MOS min abaissés pour rester robuste au bruit de
+`session_sim.simulate_session`) vs. violation positive quand affamé, reproductibilité par seed,
+formule pondérée vérifiée à la main, cohérence `qos_fitness`/`qos_fitness_components`.
+
+**Résultats de test** : 19 nouveaux tests (80 au total pour `module_d`), tous verts. Couverture
+`fitness.py` : **100 %**. Suite complète du dépôt (338 tests, tous modules) toujours verte, **96 %**
+de couverture globale — aucune régression introduite dans les modules A–C.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1233,5 +1281,6 @@ la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.p
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
 (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py`, `correlation.py` faits,
-restent `fitness.py`, `manual_stun_check.py`. Modules E–F, non commencés.
+cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py`, `correlation.py`,
+`fitness.py` faits — code et tests complets. Reste seulement `manual_stun_check.py` (validation
+réelle) avant que Module D soit entièrement clos. Modules E–F, non commencés.
