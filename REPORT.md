@@ -1259,6 +1259,25 @@ formule pondérée vérifiée à la main, cohérence `qos_fitness`/`qos_fitness_
 `fitness.py` : **100 %**. Suite complète du dépôt (338 tests, tous modules) toujours verte, **96 %**
 de couverture globale — aucune régression introduite dans les modules A–C.
 
+### `manual_stun_check.py`
+
+**Choix** : même schéma que `manual_ipinfo_check.py`/`manual_whisper_check.py`, mais **sans
+`.env`** — les requêtes STUN Binding sont publiques et non authentifiées, rien à charger via
+`load_dotenv()`. Exécute `stun_probe.measure_rtt_jitter()` en vrai contre
+`stun.l.google.com:19302`, puis affiche le MOS prédit pour les trois codecs à partir des
+conditions réellement mesurées.
+
+**Résultat de l'exécution réelle (2026-09-02)** : `rtt_mean_ms=17.51`, `jitter_ms=3.57`,
+`loss_rate=0.00%` sur 20 aller-retours UDP réels vers le serveur STUN public de Google — RTT très
+bas et perte nulle, cohérent avec une machine sur un réseau filaire/Wi-Fi domestique proche
+d'un point de présence Google. MOS prédits à partir de ces conditions : `opus=4.46 > gsm=4.13 >
+aac=3.94` — ordre conforme à la table `Ie` du sujet (Opus meilleur, AAC pire), confirmant que le
+modèle E se comporte comme attendu une fois nourri de vraies mesures réseau plutôt que de valeurs
+synthétiques.
+
+**Résultats de test** : script manuel, 0 % de couverture par conception (jamais exercé par
+pytest, même statut que les autres scripts `manual_*_check.py` du projet).
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1280,7 +1299,8 @@ près de Rodez, voir la section `lbs_poi.py` ci-dessus) et `manual_ipinfo_check.
 la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.py` ci-dessus). Rien
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
-(`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py`, `correlation.py`,
-`fitness.py` faits — code et tests complets. Reste seulement `manual_stun_check.py` (validation
-réelle) avant que Module D soit entièrement clos. Modules E–F, non commencés.
+(`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D est complet : tous les fichiers de `docs/SUJET.md` §3 implémentés et testés (80 tests,
+100 % de couverture — hors `manual_stun_check.py`, non exercé par pytest par conception), et
+validé contre la vraie API : `manual_stun_check.py` exécuté avec succès (20 mesures STUN réelles
+contre `stun.l.google.com:19302`, voir la section `manual_stun_check.py` ci-dessus). Rien ne reste
+en attente pour Module D côté code/tests/validation réelle. Modules E–F, non commencés.
