@@ -19,6 +19,7 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "requests>=2.34.2",
     "folium>=0.20.0",
+    "rich>=15.0.0",
 ]
 
 [dependency-groups]

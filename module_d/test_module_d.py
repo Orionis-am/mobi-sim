@@ -9,12 +9,15 @@ access required to run this file.
 
 from __future__ import annotations
 
+import csv
+import io
 import socket
 import struct
 
 import pytest
+from rich.console import Console
 
-from module_d import model_e, session_sim, stun_probe
+from module_d import dashboard, model_e, session_sim, stun_probe
 
 # --- model_e -----------------------------------------------------------------
 
@@ -280,3 +283,74 @@ class TestSimulateSession:
     def test_zero_required_bandwidth_means_no_deficit(self):
         session = session_sim.simulate_session("opus", bandwidth_kbps=0, required_bandwidth_kbps=0, rtt_ms=40.0, jitter_ms=5.0, seed=1)
         assert session.delay_ms == pytest.approx(40.0 / 2.0 + 5.0)
+
+
+# --- dashboard -------------------------------------------------------------------
+
+_silent_console = lambda: Console(file=io.StringIO())
+
+
+def _render(renderable) -> str:
+    buffer = io.StringIO()
+    Console(file=buffer, width=120).print(renderable)
+    return buffer.getvalue()
+
+
+class TestBuildTable:
+    def test_has_expected_columns(self):
+        table = dashboard._build_table(50.0, 2.0, 0.0, 4.1, "opus")
+        assert [c.header for c in table.columns] == ["RTT (ms)", "Gigue (ms)", "Perte (%)", "MOS", "Codec"]
+
+    def test_renders_expected_values(self):
+        rendered = _render(dashboard._build_table(50.0, 2.0, 1.5, 4.1, "opus"))
+        assert "50.0" in rendered
+        assert "opus" in rendered
+
+    def test_nan_rtt_displayed_as_dash(self):
+        rendered = _render(dashboard._build_table(float("nan"), 0.0, 0.0, 1.0, "opus"))
+        assert "nan" not in rendered.lower()
+
+
+class TestRunDashboard:
+    def test_writes_one_csv_row_per_iteration(self, tmp_path):
+        csv_path = tmp_path / "out.csv"
+        result_path = dashboard.run_dashboard(
+            n_iterations=3, csv_path=csv_path, sock=FakeStunSocket(), sleep=lambda s: None, console=_silent_console()
+        )
+        assert result_path == csv_path
+        with csv_path.open(newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert len(rows) == 3
+        assert list(rows[0].keys()) == dashboard.CSV_FIELDS
+
+    def test_creates_output_dir_if_missing(self, tmp_path):
+        csv_path = tmp_path / "nested" / "out.csv"
+        dashboard.run_dashboard(n_iterations=1, csv_path=csv_path, sock=FakeStunSocket(), sleep=lambda s: None, console=_silent_console())
+        assert csv_path.exists()
+
+    def test_injected_socket_not_closed(self, tmp_path):
+        fake = FakeStunSocket()
+        dashboard.run_dashboard(n_iterations=2, csv_path=tmp_path / "out.csv", sock=fake, sleep=lambda s: None, console=_silent_console())
+        assert fake.closed is False
+
+    def test_closes_own_socket_when_none_given(self, tmp_path, monkeypatch):
+        fake = FakeStunSocket()
+        monkeypatch.setattr(dashboard.socket, "socket", lambda *a, **kw: fake)
+        dashboard.run_dashboard(n_iterations=2, csv_path=tmp_path / "out.csv", sock=None, sleep=lambda s: None, console=_silent_console())
+        assert fake.closed is True
+
+    def test_partial_loss_reflected_in_later_rows(self, tmp_path):
+        csv_path = tmp_path / "out.csv"
+        dashboard.run_dashboard(
+            n_iterations=3, csv_path=csv_path, sock=FakeStunSocket(timeout_at_indices={0}), sleep=lambda s: None, console=_silent_console()
+        )
+        with csv_path.open(newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert float(rows[0]["loss_pct"]) > 0.0
+
+    def test_sleeps_between_but_not_after_last_iteration(self, tmp_path):
+        sleep_calls = []
+        dashboard.run_dashboard(
+            n_iterations=3, csv_path=tmp_path / "out.csv", sock=FakeStunSocket(), sleep=sleep_calls.append, console=_silent_console()
+        )
+        assert len(sleep_calls) == 2

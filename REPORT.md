@@ -1154,6 +1154,35 @@ reproductibilité par seed, cohérence de `r_factor`/`mos` avec un appel direct 
 déficit croissant → perte croissante → MOS décroissant, cas limite `required_bandwidth_kbps=0`
 (pas de déficit). Couverture `session_sim.py` : **100 %**.
 
+### `dashboard.py`
+
+**Choix** : `run_dashboard(n_iterations=20, refresh_s=0.5, csv_path=..., sock=None, codec="opus",
+sleep=time.sleep, console=None)` — `rich.live.Live` réaffiche une `Table` (RTT/Gigue/Perte/MOS/
+Codec, exactement les champs du sujet ligne 238-239) à chaque itération, une vraie mesure STUN par
+ligne (`stun_probe.measure_one_rtt`), gigue/perte calculées en cumulatif sur les échantillons vus
+jusqu'ici (même logique que `stun_probe.measure_rtt_jitter`, mais mise à jour au fil de l'eau
+plutôt qu'en un seul bloc final). `sleep`/`console` injectables, même schéma que
+`compare.measure_real_delivery` en Module B (`sleep`/`now` injectables pour ne jamais vraiment
+attendre en test) — ici `console` en plus, pour rediriger le rendu Rich vers un buffer mémoire en
+test plutôt que polluer la sortie de la suite pytest.
+
+**Export CSV automatique, pas différé** (spec ligne 239) : le fichier est ouvert une seule fois en
+écriture, une ligne est écrite et `flush`ée à chaque itération plutôt qu'accumulée en mémoire puis
+écrite à la fin — une exécution interrompue en cours de route laisse quand même les données
+partielles sur disque. Dossier de sortie créé s'il manque, même garde-fou que `map_viz.save_map_html`
+en Module C.
+
+**Tests** : `FakeStunSocket` du fichier `stun_probe.py` réutilisée telle quelle (aucune nouvelle
+fausse socket nécessaire). Couvre : colonnes/valeurs rendues (rendu Rich capturé dans un buffer
+mémoire, `nan` jamais affiché tel quel), une ligne CSV par itération avec les bons en-têtes,
+création du dossier de sortie manquant, non-fermeture d'un socket injecté vs. fermeture d'un
+socket créé en interne, perte partielle reflétée dans les lignes suivantes, `sleep` appelé
+`n_iterations − 1` fois (jamais après la dernière ligne).
+
+**Résultats de test** : 9 nouveaux tests (55 au total pour `module_d`), tous verts. Couverture
+`dashboard.py` : **100 %**. Dépendance ajoutée : `rich` (`uv add rich`), seule nouvelle dépendance
+du Module D.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1176,5 +1205,5 @@ la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.p
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
 (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py`, `stun_probe.py`, `session_sim.py` faits, restent `dashboard.py`,
+cours : `model_e.py`, `stun_probe.py`, `session_sim.py`, `dashboard.py` faits, restent
 `correlation.py`, `fitness.py`, `manual_stun_check.py`. Modules E–F, non commencés.
