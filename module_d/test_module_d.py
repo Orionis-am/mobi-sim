@@ -14,7 +14,7 @@ import struct
 
 import pytest
 
-from module_d import model_e, stun_probe
+from module_d import model_e, session_sim, stun_probe
 
 # --- model_e -----------------------------------------------------------------
 
@@ -237,3 +237,46 @@ class TestMeasureRttJitter:
         stats = stun_probe.measure_rtt_jitter(n_measurements=2, sock=None)
         assert len(stats.rtt_samples_ms) == 2
         assert fake.closed is True
+
+
+# --- session_sim ---------------------------------------------------------------
+
+
+class TestSimulateSession:
+    def test_sufficient_bandwidth_adds_no_congestion_delay(self):
+        session = session_sim.simulate_session("opus", bandwidth_kbps=64, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert session.delay_ms == pytest.approx(40.0 / 2.0 + 5.0)
+
+    def test_full_deficit_adds_more_loss_than_partial_deficit(self):
+        full = session_sim.simulate_session("gsm", bandwidth_kbps=0, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        partial = session_sim.simulate_session("gsm", bandwidth_kbps=16, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        sufficient = session_sim.simulate_session("gsm", bandwidth_kbps=32, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert full.loss_pct > partial.loss_pct > sufficient.loss_pct
+
+    def test_loss_clipped_to_hundred(self):
+        session = session_sim.simulate_session("gsm", bandwidth_kbps=-1000, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert session.loss_pct <= 100.0
+
+    def test_seed_reproducibility(self):
+        a = session_sim.simulate_session("aac", bandwidth_kbps=10, required_bandwidth_kbps=32, rtt_ms=60.0, jitter_ms=8.0, seed=42)
+        b = session_sim.simulate_session("aac", bandwidth_kbps=10, required_bandwidth_kbps=32, rtt_ms=60.0, jitter_ms=8.0, seed=42)
+        assert a == b
+
+    def test_worse_deficit_gives_lower_mos(self):
+        starved = session_sim.simulate_session("opus", bandwidth_kbps=0, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        healthy = session_sim.simulate_session("opus", bandwidth_kbps=32, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert starved.mos < healthy.mos
+
+    def test_r_and_mos_consistent_with_model_e(self):
+        session = session_sim.simulate_session("gsm", bandwidth_kbps=32, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        expected_r = model_e.r_factor("gsm", session.delay_ms, session.loss_pct)
+        assert session.r_factor == pytest.approx(expected_r)
+        assert session.mos == pytest.approx(model_e.r_to_mos(expected_r))
+
+    def test_codec_field_preserved(self):
+        session = session_sim.simulate_session("aac", bandwidth_kbps=32, required_bandwidth_kbps=32, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert session.codec == "aac"
+
+    def test_zero_required_bandwidth_means_no_deficit(self):
+        session = session_sim.simulate_session("opus", bandwidth_kbps=0, required_bandwidth_kbps=0, rtt_ms=40.0, jitter_ms=5.0, seed=1)
+        assert session.delay_ms == pytest.approx(40.0 / 2.0 + 5.0)

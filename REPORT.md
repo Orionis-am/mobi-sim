@@ -1132,6 +1132,28 @@ pytest).
 **Résultats de test** : 14 nouveaux tests (38 au total pour `module_d`), tous verts. Couverture
 `stun_probe.py` : **100 %**.
 
+### `session_sim.py`
+
+**Choix — congestion modélisée par déficit de bande passante** (spec ligne 233 : « injection
+métriques → modèle E ») : `simulate_session(codec, bandwidth_kbps, required_bandwidth_kbps,
+rtt_ms, jitter_ms, seed)` calcule un ratio de déficit
+`max(0, (requis − alloué) / requis)`, puis en dérive à la fois une perte de paquets croissante et
+un délai de mise en file croissant — un lien congestionné dégrade d'abord le délai (les tampons se
+remplissent) avant de perdre des paquets (les tampons débordent), comportement qualitatif réel
+plutôt qu'un choix arbitraire. `delay_ms = rtt/2 + gigue + délai_de_congestion` (estimation
+aller-simple + tampon de gigue + congestion) ; un bruit gaussien seedé est ajouté à la perte pour
+plus de réalisme, le tout borné/clippé.
+
+**Hypothèses documentées, sans base numérique dans le sujet** : `MAX_CONGESTION_LOSS_PCT = 30.0`
+(perte ajoutée à un déficit de bande de 100 %) et `MAX_CONGESTION_DELAY_MS = 150.0` (délai de
+congestion ajouté au même déficit) — constantes uniques choisies pour donner une dégradation
+perceptible mais pas caricaturale, même esprit que `DEFAULT_PACKET_LOSS_RATE` en Module A.
+
+**Résultats de test** : 8 nouveaux tests (46 au total pour `module_d`), tous verts, dont
+reproductibilité par seed, cohérence de `r_factor`/`mos` avec un appel direct à `model_e`,
+déficit croissant → perte croissante → MOS décroissant, cas limite `required_bandwidth_kbps=0`
+(pas de déficit). Couverture `session_sim.py` : **100 %**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1154,6 +1176,5 @@ la machine résolue en Toulouse, Occitanie, FR, voir la section `ipinfo_client.p
 ne reste en attente pour Module C côté code/tests/validation réelle ; reste seulement, non
 bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrative
 (`results/module_c_demo.html`) à intégrer au rapport final (§8, Module C 2-3 p.). Module D en
-cours : `model_e.py` (modèle E ITU-T G.107) et `stun_probe.py` (mesures STUN réelles) faits,
-restent `session_sim.py`, `dashboard.py`, `correlation.py`, `fitness.py`, `manual_stun_check.py`.
-Modules E–F, non commencés.
+cours : `model_e.py`, `stun_probe.py`, `session_sim.py` faits, restent `dashboard.py`,
+`correlation.py`, `fitness.py`, `manual_stun_check.py`. Modules E–F, non commencés.
