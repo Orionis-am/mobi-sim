@@ -1278,6 +1278,81 @@ synthétiques.
 **Résultats de test** : script manuel, 0 % de couverture par conception (jamais exercé par
 pytest, même statut que les autres scripts `manual_*_check.py` du projet).
 
+## Module F — Algorithmique évolutionnaire appliquée aux télécommunications
+
+Module transversal (`docs/SUJET.md` §3 MOD-F, lignes 301-372) : réutilise les contrats
+`*_fitness(chromosome)` déjà stables des modules A, C, D pour appliquer AG (DEAP), NSGA-II/MOEA-D
+(pymoo), DE (scipy) et PSO (pyswarm) à trois problèmes télécom concrets, après une validation
+préalable d'un AG from-scratch sur Rastrigin/Rosenbrock. Décision de planification (prise avec
+l'utilisateur avant de commencer) : construire Module F avant Module E, dans l'ordre de phases du
+sujet (phase 5 puis 6) — les endpoints `/optimize/*` de Module E doivent orchestrer les algorithmes
+de Module F, qui doivent donc exister d'abord.
+
+Ordre de construction choisi : `ag_scratch.py` → `visualize.py` → `benchmark.py` → `pb1_codec.py`
+→ `pb2_bts.py` → `pb3_qos.py` → `compare.py`, qui dévie de l'ordre littéral de l'arborescence du
+sujet (qui liste `visualize.py` en avant-dernier) : `benchmark.py` et `pb2_bts.py` ont besoin de
+tracer leurs résultats (courbes de convergence, heatmap, front de Pareto) dès qu'ils existent,
+suivant la discipline déjà établie par `module_a/visualize.py`/`module_c/map_viz.py` (les fonctions
+de tracé prennent des données déjà calculées, zéro recalcul) — construire `visualize.py` en second
+évite d'esquisser du code matplotlib ad hoc dans ces fichiers puis de le refactoriser plus tard.
+
+### `ag_scratch.py`
+
+**Contexte** : fondations de Module F — AG générique en Python pur (sans librairie externe),
+représentation réelle, sélection par tournoi (k=3), croisement SBX (η=20), mutation gaussienne
+adaptative, remplacement élitiste (`docs/SUJET.md` lignes 312-319). Validé sur Rastrigin/Rosenbrock
+dans `benchmark.py` (prochain fichier) avant que Module F ne s'attaque aux trois vrais problèmes.
+
+**Décision de portée — lecture d'une ambiguïté de CLAUDE.md** : CLAUDE.md dit que ce moteur AG est
+« validated against Rastrigin/Rosenbrock before being pointed at the real problems », ce qui pourrait
+se lire comme « ce même objet de code doit ensuite résoudre Pb1 ». Décision : `ag_scratch.py` sert
+*uniquement* à la validation Rastrigin/Rosenbrock. Pb1 impose explicitement « AG via DEAP » (`docs/
+SUJET.md` ligne 321) — réutiliser ce moteur pour Pb1 dupliquerait un AG déjà requis ailleurs sans
+ajouter de portée réellement demandée. La phrase de CLAUDE.md est donc lue comme une description de
+méthodologie (prouver la technique sur des benchmarks connus d'abord), pas comme une contrainte de
+réutilisation littérale du code.
+
+**`run_ga` minimise** (convention naturelle pour Rastrigin/Rosenbrock, minimum global à 0) — Pb1/
+Pb2/Pb3 maximisent (ou sont multi-objectifs pour Pb2) et leurs solveurs (DEAP/pymoo/DE/PSO) gèrent
+eux-mêmes l'inversion de signe ; les deux conventions n'ont pas besoin de coïncider.
+
+**Mutation gaussienne adaptative — formule choisie, faute de précision dans le sujet** : le sujet
+nomme « mutation gaussienne adaptative (σ décroissant) » sans donner de formule. Choix : décroissance
+exponentielle `sigma(gen) = sigma_init * (sigma_final/sigma_init) ** (gen/(n_gen-1))`, mise à l'échelle
+par génère par l'étendue de bornes de chaque gène — une décroissance linéaire sur-explorerait en fin
+de run, l'exponentielle réduit l'exploration en douceur. Documenté comme choix plausible, pas mesuré.
+
+**Élitisme** : les `ceil(elite_fraction * pop_size)` meilleurs individus (10 % par défaut, conforme
+au sujet) survivent inchangés à la génération suivante ; le reste est comblé par tournoi (k=3) →
+SBX (η=20, appliqué avec probabilité `crossover_rate`) → mutation gaussienne (probabilité
+`mutation_rate` par gène). `n_evaluations = pop_size * n_generations` (la population initiale compte
+comme génération 0).
+
+**Tests** : sélection par tournoi (le meilleur individu est choisi significativement plus souvent
+que le hasard uniforme ne le prédirait, sur 500 tirages), copie défensive (modifier l'individu
+retourné ne modifie pas la population), SBX (enfants toujours dans les bornes ; η élevé ramène les
+enfants près de leurs parents respectifs — et non vers le milieu, comportement vérifié après un
+premier test erroné qui supposait un blending vers le milieu), mutation gaussienne (σ=0 → identité ;
+toujours dans les bornes), formule de décroissance adaptative (valeurs de bord exactes), `run_ga`
+(historique du meilleur non-croissant par élitisme ; convergence sous un seuil lâche sur Rastrigin
+2D en 50 générations ; `n_evaluations` exact ; longueur d'historique == `n_generations` ; reproductible
+à seed fixe).
+
+**Résultats de test** : 13 tests, tous verts, 100 % de couverture sur `ag_scratch.py`. Suite complète
+du dépôt (351 tests, tous modules) toujours verte, 96 % de couverture globale — aucune régression
+introduite dans les modules A–D.
+
+**Complément — bug de test pré-existant découvert dans Module D** : en validant l'absence de
+régression sur la suite complète, `module_d/test_module_d.py::TestQosFitnessComponents::
+test_fitness_matches_manual_weighted_formula` s'est révélé intermittent (échoue environ 1 fois sur
+5, y compris en exécutant `module_d` seul, sans rapport avec Module F). Cause : le test n'appelait
+`qos_fitness_components` avec aucun `seed`, et le bruit gaussien non-seedé de `simulate_session`
+pouvait occasionnellement faire chuter le MOS d'un utilisateur sous le `min_mos` de son profil,
+déclenchant un terme de pénalité que la formule manuelle du test ne prenait pas en compte. Corrigé
+dans un commit séparé : `seed=0` fixé, et les termes de pénalité (`capacity_violation_kbps`,
+`min_mos_violation`) ajoutés à la formule manuelle attendue — le test est maintenant déterministe
+et vérifie la formule complète plutôt qu'une version partielle.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1303,4 +1378,7 @@ bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrativ
 100 % de couverture — hors `manual_stun_check.py`, non exercé par pytest par conception), et
 validé contre la vraie API : `manual_stun_check.py` exécuté avec succès (20 mesures STUN réelles
 contre `stun.l.google.com:19302`, voir la section `manual_stun_check.py` ci-dessus). Rien ne reste
-en attente pour Module D côté code/tests/validation réelle. Modules E–F, non commencés.
+en attente pour Module D côté code/tests/validation réelle. Module F est en cours (voir sa section
+ci-dessus) : `ag_scratch.py` fait, `benchmark.py`/`pb1_codec.py`/`pb2_bts.py`/`pb3_qos.py`/
+`compare.py`/`visualize.py` restent à faire. Module E non commencé — planifié après Module F,
+puisque ses endpoints `/optimize/*` doivent orchestrer les algorithmes de Module F.
