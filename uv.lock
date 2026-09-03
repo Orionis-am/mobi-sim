@@ -1775,6 +1775,7 @@ dependencies = [
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydub" },
     { name = "pymoo" },
+    { name = "pyswarm" },
     { name = "python-dotenv" },
     { name = "pyttsx3" },
     { name = "requests" },
@@ -1805,6 +1806,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pydub", specifier = ">=0.25" },
     { name = "pymoo", specifier = ">=0.6,<0.7" },
+    { name = "pyswarm", specifier = "==1.0.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyttsx3", specifier = ">=2.90" },
     { name = "requests", specifier = ">=2.34.2" },
@@ -5934,6 +5936,50 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/13/e8/4f38eb30c4dae36634a53c5b2cd73b517ea3607e10d00f61f2494449cec0/pypiwin32-223.tar.gz", hash = "sha256:71be40c1fbd28594214ecaecb58e7aa8b708eabfa0125c8a109ebd51edbd776a", size = 622, upload-time = "2018-02-26T00:43:23.994Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/1b/2f292bbd742e369a100c91faa0483172cd91a1a422a6692055ac920946c5/pypiwin32-223-py3-none-any.whl", hash = "sha256:67adf399debc1d5d14dffc1ab5acacb800da569754fafdc576b2a039485aa775", size = 1674, upload-time = "2018-02-26T00:43:23.108Z" },
+]
+
+[[package]]
+name = "pyswarm"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/15/8a7e817142e1dda9e985ca234a4cba5ead55165a7df79ea3420d9bd7ef2c/pyswarm-1.0.1-cp310-cp310-macosx_15_0_arm64.whl", hash = "sha256:749d40ff9717ba0f8b95e7d0f5745b54072afd49147e0872467165ef533b07d7", size = 813600, upload-time = "2026-08-19T10:09:48.987Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/1c/39776b33a3570a806ce156523b0fd84c3b31004d4d06989220b6c08028d4/pyswarm-1.0.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e63f4d691cf62884c2453701149927cf5c65066c0e363eebba67fd55ba1498c5", size = 1042533, upload-time = "2026-08-19T10:09:50.438Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/15/db4e328f71d93b989b129be54b203b196e1ec888f04c1d7eb9b7eb02caa5/pyswarm-1.0.1-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:0eeff0371254e97b61e1f1abdb12c8451df697193923b52c7962f7f114c4693d", size = 1440108, upload-time = "2026-08-19T10:09:51.744Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/07/bd0832e23a6e4bece1ea7945587e35c2043b4407e25c22a24605f28effc7/pyswarm-1.0.1-cp310-cp310-win_amd64.whl", hash = "sha256:e0b3568c3918ac5c9f9a3ea2164c86cbc458a5019b18ab3758c6f6357fdc2535", size = 289740, upload-time = "2026-08-19T10:09:53.556Z" },
+    { url = "https://files.pythonhosted.org/packages/57/f5/b006b0729c8ee8f6d962c6a4390f3e80d47731ae630da908ed1440f45d79/pyswarm-1.0.1-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:6672fe3f44f530128d65380f59f197d181c526a3ccf90092d2430865a1ffea23", size = 813896, upload-time = "2026-08-19T10:09:54.794Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/ea/fad9826c8fd6d6ea43476712baa685039ce4946b6af7072397238b148119/pyswarm-1.0.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6fb718679eaf3e0360949e744dd7ca5319ceb16055dfdc44ca18973bb55bbbe9", size = 1042735, upload-time = "2026-08-19T10:09:56.44Z" },
+    { url = "https://files.pythonhosted.org/packages/48/0b/48e1fa8bd483469295c22a537583be41649039a2e6a4494d8a243206883c/pyswarm-1.0.1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:933275fb7ee5bed55ac3c3e9da7ea49c173af6de2bd5e95b4c130b1418ffb0a2", size = 1440313, upload-time = "2026-08-19T10:09:57.882Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/44/e2d778fe2e3e6b59a5b2e697b29738520300caa0926dc07be123f0cd2110/pyswarm-1.0.1-cp311-cp311-win_amd64.whl", hash = "sha256:0b986b1176d2459fa08f4fd6c178ca9bcd8356b27c400440c41cae75abc26438", size = 289965, upload-time = "2026-08-19T10:09:59.212Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/ea/c0ba5633421196d1152546a94c20e7440cd38a5d257df8a04ad34e8ce238/pyswarm-1.0.1-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:49b5c319c925a053377eb9c1bb15e2854f3398dcdb218bb77de8731643c8ed5f", size = 814527, upload-time = "2026-08-19T10:10:00.517Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/44/09bfd864d5cb0ca44b5ed45675853fef79d1534beb76d55674f802144760/pyswarm-1.0.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dc4a529d91537fd51f9852d61ca5fed9e8a6c49454ebc9b2eeec1007059300da", size = 1043635, upload-time = "2026-08-19T10:10:01.876Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/ba/0e85b0351de2c08a6f379393d0f215f7d29b82224887c5230f079baf13e6/pyswarm-1.0.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:52d749fc953eceefb592c5c83d50f6b8a91c9d4f65a3379e0a75d039daf27691", size = 1441126, upload-time = "2026-08-19T10:10:03.512Z" },
+    { url = "https://files.pythonhosted.org/packages/44/6c/64d0ba5290caca17e57697dbf3370c0eca535ef37a0ace32e0fb3b69a3b8/pyswarm-1.0.1-cp312-cp312-win_amd64.whl", hash = "sha256:b571b9888436c4a665206d9a1b5b19c203630dd2cd83941ef50d42a3caf8bae2", size = 290476, upload-time = "2026-08-19T10:10:04.722Z" },
+    { url = "https://files.pythonhosted.org/packages/32/55/1ae021822621a1073e030189c1004f08d8813f7b015574155d2b02be20bc/pyswarm-1.0.1-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:0d190ee810fb794c70ccb6be0581278e419dcd31de879c20260e3b8bf7419314", size = 814474, upload-time = "2026-08-19T10:10:05.933Z" },
+    { url = "https://files.pythonhosted.org/packages/92/de/c33bc3a7cd644c4becd04517ceb6af7927ad6d67ef0a9fedb8fa185defef/pyswarm-1.0.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7f36eba9b86764c5612ecd67c6c03c5de369056048f7db83ba87abf5755eff6d", size = 1043645, upload-time = "2026-08-19T10:10:07.398Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/30/b4a45f8d0223663e699e9d4a5374796e94056774965eeebcdc2b3a14befd/pyswarm-1.0.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:ac12c28638e624f9cd8e0df59116280a27d486f32d3be31b2a29f72b50d649ee", size = 1441119, upload-time = "2026-08-19T10:10:08.693Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/5a/b826b00c5925cae022835439830dd2d6b0857b6db4f76612b970abf20cce/pyswarm-1.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:9b3c20f983760bfd716afbd5842993960c37215c76dc05e0fe570ef3a1db60a7", size = 290462, upload-time = "2026-08-19T10:10:10.169Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/a7/2b5adb8058d2e9f637e93df3a3d4e2a93eee33e510311e53ad43df1a0dbb/pyswarm-1.0.1-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:d9727739345d776e5212cc58df6d9a715ceedc9d3d322498d6227e6a071fd309", size = 814455, upload-time = "2026-08-19T10:10:11.405Z" },
+    { url = "https://files.pythonhosted.org/packages/64/00/e498943e013c9d0fc3e1e9d77738acd5bef7c0cc988878ff7aae8207664f/pyswarm-1.0.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:70a8c177835eae185bd32b04d686c5c99239c7ae60c6fa6dadb96a4e0e27eba2", size = 1043651, upload-time = "2026-08-19T10:10:12.649Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/53/96db4c47e49b781dac263f54c360df224361e4232aaee9edf931b3703dc5/pyswarm-1.0.1-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:31da0a25791088da96bae7f0ab63ef4ff5af1d67200f294517ffb5debc629594", size = 1441173, upload-time = "2026-08-19T10:10:14.092Z" },
+    { url = "https://files.pythonhosted.org/packages/19/7d/6d6f69169287041c6c983d5bfa46409a45bc3c6606ab88323cd8c887e3f3/pyswarm-1.0.1-cp314-cp314-win_amd64.whl", hash = "sha256:e75d852a78f17eb05a6f216108567bc456bf258d589e85b70c255314f9c0594b", size = 297298, upload-time = "2026-08-19T10:10:15.435Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/87/47aa9e768e51e38225205deef85d47686363e4703fe08e1b3acce0a44598/pyswarm-1.0.1-cp314-cp314t-macosx_15_0_arm64.whl", hash = "sha256:e16a56dd7e4de13418b4a6620363e9fa5ad95872b7fb42c1771c3caaa07b2437", size = 815425, upload-time = "2026-08-19T10:10:16.878Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/6a/0f705eedcc4a632b0a61653302d6addbb019b294f9816e8b83f1851ad08a/pyswarm-1.0.1-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c76ebcff5067b893c8b32b8198cfb7a3fa909e90472e17cab9cfc97f89d7bfc6", size = 1044340, upload-time = "2026-08-19T10:10:18.227Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/bb/6d57d63f23bab4ac31866b133e5b2688365ce19219f777cb0341f529fed6/pyswarm-1.0.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:793327e9e159d6c866bc84c211572f2e04ee29a0ff1a4c95c079d0fe812f9703", size = 1441857, upload-time = "2026-08-19T10:10:19.511Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/b6/ffe1ee4f2e2d73eb2177805ea733cb400338b3a3899608e37c89263d50f4/pyswarm-1.0.1-cp314-cp314t-win_amd64.whl", hash = "sha256:94ace2d35e7e52a10b0424026c94518e7a0316bc058b52714e6e07667677d798", size = 298586, upload-time = "2026-08-19T10:10:20.863Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/f2/535d8b68ffa340bb59422fa7d35d482972f61f13312d62f41bb39a1247ee/pyswarm-1.0.1-cp315-cp315-macosx_15_0_arm64.whl", hash = "sha256:d70cef48e12009b760950fed5a5ad40f288a3960687afa3fcfc4b212cbac2360", size = 814453, upload-time = "2026-08-19T10:10:22.253Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/c7/c5f740a0f532c8ea58130d2e1a6e44e851b7f754e373e837ed1c029e28a0/pyswarm-1.0.1-cp315-cp315-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:edb862f07f27f752dd8b392d6fdf8083277d62ccb24172e7909654e9b1e72b3b", size = 1043655, upload-time = "2026-08-19T10:10:23.571Z" },
+    { url = "https://files.pythonhosted.org/packages/15/84/f4850218b18d0b5b3ae17af2695ad35f45cf4cca0e6902feb8df328de1bf/pyswarm-1.0.1-cp315-cp315-musllinux_1_2_x86_64.whl", hash = "sha256:64ed938ed967a5137bc62ebad0e2f320021b0db8d1eb689a43e15f998f3de640", size = 1441166, upload-time = "2026-08-19T10:10:24.99Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/80/1abc3b51005a9bfdb04bf3d866deb1c00e217580b9d4b8ba87073d4f6edc/pyswarm-1.0.1-cp315-cp315-win_amd64.whl", hash = "sha256:1220cf32426921e5f407969c56a6b6f77955e2122602dcda3b50fbc3bd709981", size = 297289, upload-time = "2026-08-19T10:10:26.257Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/99/9162ae28f90a5eb4992daf884e60a6bda5fb96e595932e6b2aad02f78864/pyswarm-1.0.1-cp315-cp315t-macosx_15_0_arm64.whl", hash = "sha256:bc1055b642e200e7a251ced8d024ef5c99a6e2ae08ca042e103ac9900d4352b2", size = 815410, upload-time = "2026-08-19T10:10:27.81Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/6b/5886722d69d88ef085a8f80bc4b327e283678697af25f5fe5f2b57adaa62/pyswarm-1.0.1-cp315-cp315t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:81f2455d263ebe1b098bc94f41e80f5c81d1f53f52f17da42b4dcda69a2d0ea0", size = 1044324, upload-time = "2026-08-19T10:10:29.34Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/75/1aef296285bce086591eaf2543556f23f0a3d6e3dfad20d790e2f5703e42/pyswarm-1.0.1-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:94b9a1f6a10bf910f92a345c1aabbb7d1d8e7a5c1332360254c0ef7c11259e01", size = 1441857, upload-time = "2026-08-19T10:10:30.692Z" },
+    { url = "https://files.pythonhosted.org/packages/60/83/d9e60172c9e6e8af9867fa3f5d6003c7be8bf226b2bbf3b0a1340c4dfbf5/pyswarm-1.0.1-cp315-cp315t-win_amd64.whl", hash = "sha256:836cbb83b2f57d7df6545a44e29d439bdc8be58b229fe845b624a55b23e2f9ef", size = 298514, upload-time = "2026-08-19T10:10:31.988Z" },
 ]
 
 [[package]]

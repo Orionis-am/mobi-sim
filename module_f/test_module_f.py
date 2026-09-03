@@ -24,7 +24,8 @@ from module_a import visualize as a_visualize
 from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
 from module_a.fitness import codec_fitness
-from module_f import ag_scratch, benchmark, pb1_codec, pb2_bts, visualize
+from module_d.fitness import DEFAULT_TOTAL_CAPACITY_KBPS, qos_fitness_components
+from module_f import ag_scratch, benchmark, pb1_codec, pb2_bts, pb3_qos, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -425,3 +426,50 @@ class TestSelectBestCompromise:
         )
         best = pb2_bts.select_best_compromise(result)
         assert best[0] == 3
+
+
+# --- pb3_qos -----------------------------------------------------------------
+
+
+class TestBounds:
+    def test_length_matches_twice_profile_count(self):
+        bounds = pb3_qos._bounds()
+        assert len(bounds) == 20
+
+
+class TestRunDe:
+    def test_finite_and_non_decreasing_history(self):
+        result = pb3_qos.run_de(maxiter=5, popsize=5, seed=0)
+        assert np.isfinite(result.best_fitness)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+    def test_reproducible_with_same_seed(self):
+        r1 = pb3_qos.run_de(maxiter=5, popsize=5, seed=0)
+        r2 = pb3_qos.run_de(maxiter=5, popsize=5, seed=0)
+        assert r1.best_fitness == r2.best_fitness
+        np.testing.assert_array_equal(r1.best_chromosome, r2.best_chromosome)
+
+
+class TestRunPso:
+    def test_history_length_matches_maxiter_plus_one(self):
+        result = pb3_qos.run_pso(swarmsize=10, maxiter=5, seed=0)
+        assert len(result.history_best_fitness) == 6
+
+    def test_history_is_non_decreasing(self):
+        result = pb3_qos.run_pso(swarmsize=10, maxiter=5, seed=0)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+    def test_reproducible_with_same_seed(self):
+        r1 = pb3_qos.run_pso(swarmsize=10, maxiter=5, seed=0)
+        r2 = pb3_qos.run_pso(swarmsize=10, maxiter=5, seed=0)
+        assert r1.best_fitness == r2.best_fitness
+        np.testing.assert_array_equal(r1.best_chromosome, r2.best_chromosome)
+
+
+class TestConstraintRespected:
+    def test_total_bandwidth_close_to_or_under_capacity(self):
+        result = pb3_qos.run_de(maxiter=40, popsize=15, seed=0)
+        components = qos_fitness_components(result.best_chromosome)
+        assert components["total_bandwidth_kbps"] < DEFAULT_TOTAL_CAPACITY_KBPS * 1.2

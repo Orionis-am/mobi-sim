@@ -1525,6 +1525,63 @@ construit à la main.
 couverture sur `pb2_bts.py`. Suite complète du dépôt (388 tests) toujours verte, 97 % de
 couverture globale.
 
+### `pb3_qos.py`
+
+**Contexte** : Pb3 du sujet — allocation de ressources QoS multi-utilisateurs, DE (scipy) contre
+PSO (pyswarm) sur `module_d.fitness.qos_fitness` (`docs/SUJET.md` lignes 342-350). Les deux
+minimisent `-qos_fitness(...)` puisque `qos_fitness` est à maximiser. Dépendance ajoutée :
+`pyswarm==1.0.1` (épinglé exact — petite librairie ressuscitée par un seul mainteneur, épinglage
+strict pour qu'un futur `uv sync` ne tire pas silencieusement une version différente).
+
+**Viabilité et reproductibilité de `pyswarm` — vérifiées en live, pas supposées** : le paquet PyPI
+`pyswarm` (distinct de `pyswarms`, activement maintenu) a été ressuscité du v0.7.0 au v1.0.1 actuel
+(mainteneur `eggzec`), exige Python `>=3.10`, fournit des wheels `win_amd64` compatibles avec cet
+environnement. Vérifié par un essai jetable avant d'écrire le code : `pso(..., seed=seed)` seed un
+générateur local utilisé pour tous les tirages aléatoires (positions/vitesses initiales, tirages
+par itération) — aucun contournement `np.random.seed()` global nécessaire ; même seed → même
+`x`/`fun` ; `nfev == swarmsize * (maxiter + 1)` exactement (vérifié : `swarmsize=10, maxiter=5 →
+nfev=60`).
+
+**Reconstruction de la courbe de convergence PSO** : `pyswarm` n'expose aucun callback par
+itération, seulement un `OptimizeResult` final. L'objectif enveloppé enregistre chaque évaluation
+brute dans l'ordre ; puisque `nfev = swarmsize * (maxiter + 1)` (le premier bloc de `swarmsize`
+évaluations est l'essaim initial, chaque bloc suivant une itération), `run_pso` découpe l'historique
+en blocs de taille `swarmsize` et prend le meilleur-jusqu'ici de chaque bloc.
+
+**Courbe de convergence DE** : via le `callback` de `differential_evolution`, une évaluation
+`qos_fitness` supplémentaire par génération pour enregistrer la vraie valeur (signe corrigé) —
+négligeable face aux `popsize * maxiter` évaluations déjà effectuées.
+
+**`polish=False` obligatoire** : le chromosome mélange un gène codec discret et un gène bande
+passante continu par utilisateur ; l'étape L-BFGS-B de `polish=True` suppose un gradient qui
+n'existe pas à travers le gène discret.
+
+**Bug de reproductibilité trouvé et corrigé avant commit — même classe de bug que Module D** :
+en écrivant les tests, `test_reproducible_with_same_seed` échouait pour DE *et* PSO, et l'historique
+de DE n'était pas monotone. Cause : `qos_fitness` tire un bruit gaussien non-seedé en interne
+(`module_d/session_sim.py`) sauf si un `seed` lui est explicitement transmis — exactement le même
+bug que celui corrigé dans `module_d/test_module_d.py::test_fitness_matches_manual_weighted_formula`
+plus tôt dans cette session. Sans transmission du `seed` de `run_de`/`run_pso` à *chaque* appel de
+`qos_fitness` (pas seulement au seed propre de l'optimiseur DE/PSO), les deux solveurs cherchaient
+sur une surface de fitness qui changeait aléatoirement entre deux évaluations du même chromosome —
+cassant à la fois la reproductibilité et la reconstruction de l'historique par callback. Corrigé en
+transmettant le même `seed` à tous les appels de `qos_fitness` dans les deux fonctions.
+
+**Budget égal DE/PSO — délégué à `compare.py`** : le nombre total d'évaluations de DE
+(`popsize * len(bounds) * (maxiter+1)`, scipy multiplie `popsize` par la dimensionnalité en
+interne) et de PSO (`swarmsize * (maxiter+1)`) ne coïncident pas à paramètres par défaut égaux — les
+faire correspondre à un budget cible commun est laissé à la couche de comparaison, qui documentera
+l'écart d'arrondi résultant.
+
+**Tests** : longueur des bornes (20 = 2 x 10 profils) ; DE et PSO — fitness finie, historique
+non-décroissant, reproductibilité à seed fixe (le test qui a révélé le bug ci-dessus) ; longueur de
+l'historique PSO exactement `maxiter + 1` ; contrainte de capacité respectée à convergence
+généreuse (bande totale recalculée via `qos_fitness_components`).
+
+**Résultats de test** : 57 tests au total pour Module F (7 nouveaux), tous verts, 100 % de
+couverture sur `pb3_qos.py`. Suite complète du dépôt (395 tests) toujours verte, 97 % de
+couverture globale.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

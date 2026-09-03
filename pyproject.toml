@@ -22,6 +22,7 @@ dependencies = [
     "rich>=15.0.0",
     "deap>=1.4,<2.0",
     "pymoo>=0.6,<0.7",
+    "pyswarm==1.0.1",
 ]
 
 [dependency-groups]
