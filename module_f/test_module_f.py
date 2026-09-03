@@ -23,7 +23,7 @@ from matplotlib.figure import Figure
 from module_a import visualize as a_visualize
 from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
-from module_f import ag_scratch, visualize
+from module_f import ag_scratch, benchmark, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -201,3 +201,92 @@ class TestBuildBtsPlacementMap:
         new_positions = np.array([[5_000.0, 5_000.0], [2_000.0, 2_000.0]])
         m = visualize.build_bts_placement_map(terrain, new_positions)
         assert len(_markers(m)) == len(terrain.bts) + len(new_positions)
+
+
+# --- benchmark ---------------------------------------------------------------
+
+
+class TestRastrigin:
+    def test_global_minimum_at_origin(self):
+        assert benchmark.rastrigin(np.zeros(5)) == pytest.approx(0.0)
+
+    def test_positive_away_from_origin(self):
+        assert benchmark.rastrigin(np.array([1.5, -2.0])) > 0.0
+
+
+class TestRosenbrock:
+    def test_global_minimum_at_ones(self):
+        assert benchmark.rosenbrock(np.ones(4)) == pytest.approx(0.0)
+
+    def test_positive_away_from_ones(self):
+        assert benchmark.rosenbrock(np.zeros(4)) > 0.0
+
+
+class TestRandomSearch:
+    def test_history_is_non_increasing(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        result = benchmark.random_search(benchmark.rastrigin, bounds, n_evaluations=30, seed=0)
+        history = result.history_best_fitness
+        assert all(a >= b for a, b in zip(history, history[1:]))
+
+    def test_n_evaluations_matches_request(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        result = benchmark.random_search(benchmark.rastrigin, bounds, n_evaluations=17, seed=0)
+        assert result.n_evaluations == 17
+        assert len(result.history_best_fitness) == 17
+
+    def test_reproducible_with_same_seed(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        r1 = benchmark.random_search(benchmark.rastrigin, bounds, n_evaluations=20, seed=5)
+        r2 = benchmark.random_search(benchmark.rastrigin, bounds, n_evaluations=20, seed=5)
+        assert r1.best_fitness == r2.best_fitness
+        assert np.array_equal(r1.best_x, r2.best_x)
+
+
+class TestHillClimbing:
+    def test_history_is_non_increasing(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        result = benchmark.hill_climbing(benchmark.rastrigin, bounds, n_iterations=30, seed=0)
+        history = result.history_best_fitness
+        assert all(a >= b for a, b in zip(history, history[1:]))
+
+    def test_n_evaluations_matches_request(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        result = benchmark.hill_climbing(benchmark.rastrigin, bounds, n_iterations=12, seed=0)
+        assert result.n_evaluations == 12
+        assert len(result.history_best_fitness) == 12
+
+    def test_reproducible_with_same_seed(self):
+        bounds = [benchmark.RASTRIGIN_BOUNDS] * 2
+        r1 = benchmark.hill_climbing(benchmark.rastrigin, bounds, n_iterations=15, seed=3)
+        r2 = benchmark.hill_climbing(benchmark.rastrigin, bounds, n_iterations=15, seed=3)
+        assert r1.best_fitness == r2.best_fitness
+
+
+class TestRunBenchmarkSuite:
+    def test_returns_both_functions_with_matched_budgets(self):
+        config = ag_scratch.GAConfig(pop_size=10, n_generations=5, seed=0)
+        results = benchmark.run_benchmark_suite(dim=2, seed=0, ga_config=config)
+        assert set(results.keys()) == {"rastrigin", "rosenbrock"}
+        for name in results:
+            budget = config.pop_size * config.n_generations
+            assert results[name]["ga"].n_evaluations == budget
+            assert results[name]["random_search"].n_evaluations == budget
+            assert results[name]["hill_climbing"].n_evaluations == budget
+
+
+class TestHyperparameterSweep:
+    def test_shape_and_finiteness(self):
+        grid = benchmark.hyperparameter_sweep(
+            benchmark.rastrigin,
+            benchmark.RASTRIGIN_BOUNDS,
+            dim=2,
+            pop_sizes=(5, 10),
+            crossover_rates=(0.6, 0.9),
+            mutation_rates=(0.05, 0.2),
+            n_runs=2,
+            n_generations=5,
+            seed=0,
+        )
+        assert grid.shape == (2, 2, 2)
+        assert np.all(np.isfinite(grid))

@@ -1388,6 +1388,43 @@ sur une entrée synthétique minimale ; `build_bts_placement_map` compte les mar
 couverture sur `visualize.py`. Suite complète du dépôt (359 tests) toujours verte, 96 % de
 couverture globale — aucune régression dans les modules A–D.
 
+### `benchmark.py`
+
+**Contexte** : validation de l'AG from-scratch (`ag_scratch.py`) contre Rastrigin/Rosenbrock, en
+2D et 10D, comparé à une recherche aléatoire et un hill climbing, plus le balayage
+d'hyperparamètres (population, taux de croisement, taux de mutation) demandé par le sujet
+(`docs/SUJET.md` lignes 316-319).
+
+**Hill climbing placé ici, pas dans `ag_scratch.py`** : c'est une référence de comparaison pour la
+validation de ce fichier, hors du périmètre « AG from scratch » du sujet (qui ne nomme que
+sélection/SBX/mutation/élitisme comme composants de l'AG lui-même). Implémentation : une
+perturbation gaussienne par itération, acceptée seulement si elle améliore la fitness — une
+évaluation par itération, directement comparable à `random_search`/`run_ga` en nombre d'évaluations.
+
+**Ambiguïté de la heatmap résolue** : le sujet demande une heatmap des scores finaux moyennés sur
+10 exécutions, balayée sur 3 hyperparamètres — impossible dans un seul plan 2D. `hyperparameter_
+sweep` renvoie donc le tableau 3D complet (population x croisement x mutation) ; le rendu (dans
+`compare.py` ou le rapport) en tranche **trois** heatmaps 2D (croisement x mutation), une par taille
+de population, via `visualize.plot_hyperparam_heatmap`. Documenté aussi dans `visualize.py`.
+
+**Seed par exécution** : `seed + run_index`, même idiome que `module_d/fitness.py::
+qos_fitness_components` — chaque exécution du balayage a un seed distinct mais reproductible.
+
+**Budget d'évaluations partagé** : `run_benchmark_suite` calibre `random_search`/`hill_climbing`
+sur exactement `pop_size * n_generations` (le budget de l'AG), pour que la comparaison à budget
+égal exigée par le sujet (ligne 356) soit vraie dès ce premier banc d'essai, pas seulement dans
+`compare.py` plus tard.
+
+**Tests** : minima globaux connus de Rastrigin (0 à l'origine) et Rosenbrock (0 en tout-uns) ;
+historiques non-croissants et `n_evaluations` exact pour les deux baselines ; reproductibilité à
+seed fixe ; `run_benchmark_suite` renvoie les deux fonctions avec des budgets identiques entre AG/
+recherche aléatoire/hill climbing ; `hyperparameter_sweep` — forme `(2,2,2)` et valeurs finies sur
+une grille réduite.
+
+**Résultats de test** : 33 tests au total pour Module F (12 nouveaux), tous verts, 100 % de
+couverture sur `benchmark.py`. Suite complète du dépôt (371 tests) toujours verte, 96 % de
+couverture globale.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
