@@ -486,9 +486,13 @@ class TestQosFitnessComponents:
         assert a == b
 
     def test_fitness_matches_manual_weighted_formula(self):
+        # seeded: simulate_session's unseeded loss noise can otherwise push a user's MOS below
+        # its profile's min_mos on some runs, adding a penalty term this manual formula doesn't
+        # account for and making the assertion flaky (found while validating Module F's tests).
         chromosome = [2.0, 32.0, 2.0, 1.0]
-        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, weights=(0.8, 0.2))
+        result = fitness.qos_fitness_components(chromosome, profiles=_TEST_PROFILES, total_capacity_kbps=100.0, weights=(0.8, 0.2), seed=0)
         expected = 0.8 * result["mean_mos"] - 0.2 * (result["total_bandwidth_kbps"] / 100.0)
+        expected -= result["capacity_violation_kbps"] + result["min_mos_violation"]
         assert result["fitness"] == pytest.approx(expected)
 
 
