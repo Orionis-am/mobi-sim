@@ -25,7 +25,7 @@ from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
 from module_a.fitness import codec_fitness
 from module_d.fitness import DEFAULT_TOTAL_CAPACITY_KBPS, qos_fitness_components
-from module_f import ag_scratch, benchmark, pb1_codec, pb2_bts, pb3_qos, visualize
+from module_f import ag_scratch, benchmark, compare, pb1_codec, pb2_bts, pb3_qos, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -473,3 +473,58 @@ class TestConstraintRespected:
         result = pb3_qos.run_de(maxiter=40, popsize=15, seed=0)
         components = qos_fitness_components(result.best_chromosome)
         assert components["total_bandwidth_kbps"] < DEFAULT_TOTAL_CAPACITY_KBPS * 1.2
+
+
+# --- compare -----------------------------------------------------------------
+
+
+class _FakeResult:
+    def __init__(self, best_fitness: float, n_evaluations: int = 10):
+        self.best_fitness = best_fitness
+        self.n_evaluations = n_evaluations
+
+
+class TestSummarizeRuns:
+    def test_zero_variance_when_runs_identical(self):
+        summary = compare.summarize_runs("p", "algo", lambda seed: _FakeResult(5.0), n_runs=4, seed=0)
+        assert summary.variance_over_runs == 0.0
+        assert summary.best_value == 5.0
+
+    def test_positive_variance_when_runs_differ(self):
+        summary = compare.summarize_runs("p", "algo", lambda seed: _FakeResult(float(seed)), n_runs=4, seed=0)
+        assert summary.variance_over_runs > 0.0
+
+    def test_maximize_false_picks_minimum(self):
+        summary = compare.summarize_runs("p", "algo", lambda seed: _FakeResult(float(seed)), n_runs=4, seed=0, maximize=False)
+        assert summary.best_value == 0.0
+
+
+class TestBuildComparisonTable:
+    def test_one_row_per_summary_with_expected_keys(self):
+        summaries = [
+            compare.AlgoRunSummary("p1", "AG", 1.0, 0.1, 0.0, {}, 10),
+            compare.AlgoRunSummary("p1", "DE", 2.0, 0.2, 0.1, {}, 20),
+        ]
+        table = compare.build_comparison_table(summaries)
+        assert len(table) == 2
+        assert set(table[0].keys()) == {
+            "problem",
+            "algorithm",
+            "best_value",
+            "convergence_time_s",
+            "variance_over_runs",
+            "recommended_params",
+            "n_evaluations",
+        }
+
+
+class TestRunFixedBudgetComparison:
+    def test_pb3_returns_de_and_pso_histories(self):
+        result = compare.run_fixed_budget_comparison("pb3_qos", n_evaluations=200, n_runs=2, seed=0)
+        assert set(result.keys()) == {"de", "pso"}
+        assert len(result["de"]) > 0
+        assert len(result["pso"]) > 0
+
+    def test_unknown_problem_raises(self):
+        with pytest.raises(ValueError):
+            compare.run_fixed_budget_comparison("unknown", n_evaluations=100)

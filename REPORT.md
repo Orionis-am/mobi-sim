@@ -1582,6 +1582,58 @@ généreuse (bande totale recalculée via `qos_fitness_components`).
 couverture sur `pb3_qos.py`. Suite complète du dépôt (395 tests) toujours verte, 97 % de
 couverture globale.
 
+### `compare.py`
+
+**Contexte — dernier fichier de Module F** : tableau comparatif AG (DEAP)/DE (scipy)/PSO
+(pyswarm)/NSGA-II (pymoo) par problème (meilleure valeur, temps de convergence, robustesse,
+paramètres recommandés) et courbes de convergence à budget d'évaluations fixé et identique entre
+algorithmes (`docs/SUJET.md` lignes 352-359).
+
+**Ordre des métriques résolu** : le sujet demande à la fois un budget d'évaluations égal (« fixé et
+identique entre algorithmes », ligne 356) et un temps de convergence (colonne du tableau) sans dire
+lequel est prioritaire. Décision : le budget d'évaluations égal est l'axe de comparaison
+*primaire* pour toute courbe multi-algorithmes (`run_fixed_budget_comparison`) ; le temps réel
+(`convergence_time_s`) est enregistré et affiché comme colonne supplémentaire du tableau, jamais
+utilisé pour normaliser ou arbitrer la comparaison primaire.
+
+**Style — dict/dataclass, pas `pandas`** : aucun des fichiers `compare.py`-équivalents de A-D
+(`module_b/compare.py` est le précédent le plus proche) n'utilise pandas pour ses tableaux ; choix
+de rester cohérent plutôt que d'introduire un nouveau style ici.
+
+**`summarize_runs` — direction de maximisation paramétrable** : les conventions de Module F
+diffèrent selon le fichier (`ag_scratch`/`benchmark` minimisent la fitness brute type Rastrigin,
+`pb1_codec`/`pb3_qos` maximisent un score à signe déjà corrigé) — un paramètre `maximize: bool`
+choisit si « meilleure valeur » signifie le run au `best_fitness` le plus haut ou le plus bas,
+plutôt que de deviner la convention depuis le nom de l'algorithme.
+
+**Budget égal DE/PSO pour Pb3** : `_fixed_budget_pb3` retro-calcule `popsize`/`swarmsize` à partir
+d'un budget cible commun (`popsize * n_dims * (maxiter+1)` pour DE, `swarmsize * (maxiter+1)` pour
+PSO — formules vérifiées lors de l'écriture de `pb3_qos.py`), acceptant le petit écart d'arrondi
+inhérent aux deux formules de dimensionnement de population.
+
+**Validation réelle bout-en-bout** : les 4 fichiers précédents ont chacun été validés
+individuellement en live pendant leur construction ; `compare.py` a en plus été exécuté une fois de
+bout en bout, orchestrant tous les fichiers ensemble avec des tailles réalistes (pas seulement les
+petites tailles des tests unitaires), produisant de vrais artefacts dans `results/module_f/`
+(non commité, `results/` est gitignoré comme `results/module_c_demo.html`) : courbe de convergence
+Rastrigin 2D (AG/recherche aléatoire/hill climbing), courbe Pb1 (AG DEAP contre recherche
+aléatoire, meilleur `codec_fitness=2.489`), front de Pareto Pb2 N=10 (NSGA-II : 32 points non
+dominés en 1000 évaluations ; MOEA/D : 28 points en 700), courbes d'hypervolume NSGA-II vs MOEA/D,
+carte Folium du meilleur compromis Pb2 (`pb2_bts_map.html`), et courbe Pb3 DE vs PSO à budget égal
+(1500 évaluations, moyenné sur 5 runs). Confirme que le câblage bout-en-bout entre tous les fichiers
+de Module F fonctionne, pas seulement chaque fichier isolément sous mock/terrain synthétique.
+
+**Tests** : `summarize_runs` — variance nulle quand les runs sont identiques, positive quand ils
+diffèrent (seed variable), `maximize=False` sélectionne bien le minimum ; `build_comparison_table`
+— une ligne par résumé, clés attendues ; `run_fixed_budget_comparison` sur Pb3 (cas à 2 algorithmes
+le plus simple) — renvoie bien les historiques `"de"` et `"pso"` ; problème inconnu lève `ValueError`.
+
+**Résultats de test** : 63 tests au total pour Module F (6 nouveaux), tous verts, 100 % de
+couverture sur `compare.py`. Suite complète du dépôt (401 tests) toujours verte, 97 % de
+couverture globale — **Module F est complet** : les 7 fichiers de `docs/SUJET.md` §3 sont
+implémentés et testés (100 % de couverture par fichier, aucun script manuel nécessaire — module
+purement local, aucune API externe).
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1607,7 +1659,15 @@ bloquant : tableau comparatif Cell-ID/TOA/Wi-Fi/IP et carte Folium démonstrativ
 100 % de couverture — hors `manual_stun_check.py`, non exercé par pytest par conception), et
 validé contre la vraie API : `manual_stun_check.py` exécuté avec succès (20 mesures STUN réelles
 contre `stun.l.google.com:19302`, voir la section `manual_stun_check.py` ci-dessus). Rien ne reste
-en attente pour Module D côté code/tests/validation réelle. Module F est en cours (voir sa section
-ci-dessus) : `ag_scratch.py` fait, `benchmark.py`/`pb1_codec.py`/`pb2_bts.py`/`pb3_qos.py`/
-`compare.py`/`visualize.py` restent à faire. Module E non commencé — planifié après Module F,
-puisque ses endpoints `/optimize/*` doivent orchestrer les algorithmes de Module F.
+en attente pour Module D côté code/tests/validation réelle. Module F est complet côté code et
+tests : les 7 fichiers de `docs/SUJET.md` §3 (`ag_scratch.py`, `visualize.py`, `benchmark.py`,
+`pb1_codec.py`, `pb2_bts.py`, `pb3_qos.py`, `compare.py`) sont implémentés et testés (401 tests,
+100 % de couverture par fichier de Module F — pas de script manuel nécessaire, module purement
+local sans API externe), et validés bout-en-bout avec des tailles réalistes (pas seulement les
+tests unitaires) : voir la section `compare.py` ci-dessus pour le détail des artefacts réels
+générés dans `results/module_f/` (non commité, `results/` est gitignoré). Rien ne reste en attente
+pour Module F côté code/tests/validation réelle ; reste seulement, non bloquant : tableau
+comparatif final et discussion No Free Lunch pour le rapport technique (§8, Module F 4-5 p.),
+animation Folium de l'évolution BTS génération-par-génération (bonus, non requis). Module E non
+commencé — à planifier maintenant que Module F existe, puisque ses endpoints `/optimize/*` doivent
+orchestrer les algorithmes de Module F (AG DEAP, NSGA-II/MOEA-D pymoo, DE scipy, PSO pyswarm).
