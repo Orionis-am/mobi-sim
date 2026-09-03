@@ -1468,6 +1468,63 @@ chromosome bien un point de la grille ; idempotence du enregistrement `creator`.
 couverture sur `pb1_codec.py`. Suite complète du dépôt (380 tests) toujours verte, 97 % de
 couverture globale.
 
+### `pb2_bts.py`
+
+**Contexte** : Pb2 du sujet, le plus riche du module — placement optimal de N nouvelles BTS,
+NSGA-II contre MOEA/D via pymoo, 3 objectifs (couverture, interférence, coût), scoré par
+`module_c.fitness.bts_coverage_fitness` qui retourne déjà exactement le triplet dont pymoo a
+besoin (`docs/SUJET.md` lignes 330-340). Dépendance ajoutée : `pymoo>=0.6,<0.7` (`uv add`).
+API pymoo vérifiée en live avant écriture (`res.history[i].pop.get("F")` pour le suivi
+génération-par-génération, `res.algorithm.evaluator.n_eval` pour le nombre d'évaluations exact,
+`get_reference_directions("das-dennis", 3, n_partitions=12)` → 91 directions pour MOEA/D).
+
+**Point de référence de l'hypervolume — bug de signe évité** : le sujet ne donne aucune valeur.
+Choix initial envisagé (`1.1 × nadir`) s'est révélé faux à la vérification : `f1 = -couverture%`
+est négatif, donc multiplier un nadir négatif par 1.1 le rend *moins* négatif, donc *meilleur* —
+l'inverse de ce qu'exige l'indicateur d'hypervolume (le point de référence doit être dominé par,
+donc pire que, tous les points observés). Corrigé : `ref_point = nadir + 0.1 * |nadir|` (marge
+*additive*, pas multiplicative), qui reste correcte quel que soit le signe de chaque objectif.
+
+**« Meilleure solution » pour la carte — ambiguïté résolue** : le sujet dit « meilleure solution
+sur carte Folium » sans définir « meilleure » sous Pareto-optimalité. `select_best_compromise`
+normalise chaque objectif du front final sur `[0,1]` puis choisit le point le plus proche
+(distance euclidienne) du point idéal `(0,0,0)` — un heuristique de « knee point » standard et
+défendable, testé sur un front construit à la main où le point attendu est sans ambiguïté.
+
+**`final_F` peut avoir moins de lignes que `pop_size`** : `res.F` de pymoo est le front non-dominé
+final, pas la population complète — sa taille varie selon le problème et n'est garantie égale à
+`pop_size` que si tous les individus finaux sont non-dominés. Les tests vérifient `len(final_F) <=
+pop_size` plutôt qu'une égalité stricte, et `n_evaluations` utilise `res.algorithm.evaluator.n_eval`
+(le vrai compteur pymoo) plutôt qu'un recalcul `pop_size * n_generations` qui suppose implicitement
+qu'aucune évaluation n'est mise en cache ou sautée en interne.
+
+**Seed transmis à la fitness, pas seulement à pymoo** : `bts_coverage_fitness`'s `coverage_fraction`
+tire des points de test aléatoires ; sans seed transmis, chaque appel utiliserait une graine
+différente et la fitness d'un même chromosome varierait d'un appel à l'autre, ce qui casserait la
+reproductibilité de la recherche (et la pression de sélection de NSGA-II, qui suppose une fitness
+stable). `run_nsga2`/`run_moead` transmettent donc leur propre `seed` à la fois à pymoo et, via
+`fitness_kwargs`, à `bts_coverage_fitness`.
+
+**MOEA/D n'a pas de `pop_size` indépendant** : sa taille de population est fixée par le nombre de
+directions de référence (`n_partitions`), vérifié en live (`n_partitions=12` → 91 directions ;
+`n_partitions=3` → 15, utilisé dans les tests rapides) — pas un paramètre séparément réglable comme
+pour NSGA-II.
+
+**Validation réelle** : `run_nsga2` exécuté une fois contre le vrai terrain OpenCelliD (N=3,
+pop_size=10, 3 générations) — front final non-dominé de 6 points, hypervolume croissant sur les 3
+générations (13365 → 13600 → 13646), confirmant le câblage bout-en-bout avant d'écrire les tests
+(qui, eux, utilisent un terrain synthétique à 4 BTS, suivant le précédent de `module_c/fitness.py`).
+
+**Tests** : dimensions du `Problem` correctes ; forme de sortie de `_evaluate` ; front final bien
+`(n_front, 3)` avec `n_front <= pop_size` ; nombre d'évaluations exact pour NSGA-II et MOEA/D ;
+reproductibilité à seed fixe ; historique d'hypervolume de longueur correcte et fini, avec un cas
+de point de référence explicite calculé à la main ; choix du meilleur compromis sur un front
+construit à la main.
+
+**Résultats de test** : 50 tests au total pour Module F (8 nouveaux), tous verts, 100 % de
+couverture sur `pb2_bts.py`. Suite complète du dépôt (388 tests) toujours verte, 97 % de
+couverture globale.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

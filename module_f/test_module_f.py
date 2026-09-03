@@ -24,7 +24,7 @@ from module_a import visualize as a_visualize
 from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
 from module_a.fitness import codec_fitness
-from module_f import ag_scratch, benchmark, pb1_codec, visualize
+from module_f import ag_scratch, benchmark, pb1_codec, pb2_bts, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -354,3 +354,74 @@ class TestGridSearchCodec:
         assert result.best_chromosome[1] in [float(f) for f in pb1_codec.FRAME_SIZE_CHOICES_MS]
         assert result.best_chromosome[2] in [0.0, 1.0]
         assert result.best_chromosome[3] in [0.0, 1.0, 2.0]
+
+
+# --- pb2_bts -----------------------------------------------------------------
+
+_PB2_FITNESS_KWARGS = {"n_test_points": 20}  # small n_test_points keeps tests fast
+
+
+class TestBtsPlacementProblem:
+    def test_dimensions_match_n_new_bts(self):
+        problem = pb2_bts.BtsPlacementProblem(n_new_bts=3, terrain=_placement_terrain())
+        assert problem.n_var == 6
+        assert problem.n_obj == 3
+
+    def test_evaluate_fills_f_with_expected_shape(self):
+        problem = pb2_bts.BtsPlacementProblem(n_new_bts=2, terrain=_placement_terrain(), **_PB2_FITNESS_KWARGS)
+        X = np.random.default_rng(0).uniform(0.0, 1.0, size=(5, 4))
+        out = {}
+        problem._evaluate(X, out)
+        assert out["F"].shape == (5, 3)
+
+
+class TestRunNsga2:
+    def test_final_front_shape_and_budget(self):
+        result = pb2_bts.run_nsga2(n_new_bts=1, terrain=_placement_terrain(), pop_size=8, n_generations=3, seed=0, **_PB2_FITNESS_KWARGS)
+        assert result.final_F.shape[1] == 3
+        assert len(result.final_F) <= 8
+        assert result.n_evaluations == 8 * 3
+
+    def test_reproducible_with_same_seed(self):
+        kwargs = dict(n_new_bts=1, terrain=_placement_terrain(), pop_size=8, n_generations=3, seed=0, **_PB2_FITNESS_KWARGS)
+        r1 = pb2_bts.run_nsga2(**kwargs)
+        r2 = pb2_bts.run_nsga2(**kwargs)
+        np.testing.assert_array_equal(r1.final_F, r2.final_F)
+
+
+class TestRunMoead:
+    def test_final_front_shape_and_budget(self):
+        result = pb2_bts.run_moead(n_new_bts=1, terrain=_placement_terrain(), n_partitions=3, n_generations=3, seed=0, **_PB2_FITNESS_KWARGS)
+        assert result.final_F.shape[1] == 3
+        n_ref_dirs = len(result.F_history[0])
+        assert result.n_evaluations == n_ref_dirs * 3
+
+
+class TestHypervolumeHistory:
+    def test_length_matches_n_generations_and_is_finite(self):
+        result = pb2_bts.run_nsga2(n_new_bts=1, terrain=_placement_terrain(), pop_size=8, n_generations=4, seed=0, **_PB2_FITNESS_KWARGS)
+        history = pb2_bts.hypervolume_history(result)
+        assert len(history) == 4
+        assert all(np.isfinite(v) for v in history)
+
+    def test_explicit_ref_point_is_used(self):
+        result = pb2_bts.Pb2Result(
+            F_history=[np.array([[1.0, 1.0, 1.0]])],
+            final_F=np.array([[1.0, 1.0, 1.0]]),
+            final_X=np.array([[0]]),
+            n_evaluations=1,
+        )
+        history = pb2_bts.hypervolume_history(result, ref_point=np.array([2.0, 2.0, 2.0]))
+        assert history == [pytest.approx(1.0)]
+
+
+class TestSelectBestCompromise:
+    def test_returns_point_closest_to_ideal(self):
+        result = pb2_bts.Pb2Result(
+            F_history=[],
+            final_F=np.array([[0.0, 0.0, 10.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [1.0, 1.0, 1.0]]),
+            final_X=np.array([[0], [1], [2], [3]]),
+            n_evaluations=0,
+        )
+        best = pb2_bts.select_best_compromise(result)
+        assert best[0] == 3
