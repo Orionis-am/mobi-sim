@@ -20,6 +20,7 @@ dependencies = [
     "requests>=2.34.2",
     "folium>=0.20.0",
     "rich>=15.0.0",
+    "deap>=1.4,<2.0",
 ]
 
 [dependency-groups]

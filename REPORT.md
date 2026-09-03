@@ -1425,6 +1425,49 @@ une grille réduite.
 couverture sur `benchmark.py`. Suite complète du dépôt (371 tests) toujours verte, 96 % de
 couverture globale.
 
+### `pb1_codec.py`
+
+**Contexte** : Pb1 du sujet — optimisation de configuration codec, AG via DEAP contre
+`module_a.fitness.codec_fitness` (`docs/SUJET.md` lignes 321-328), comparé à une recherche
+aléatoire et une recherche par grille exhaustive, en nombre d'évaluations de fitness. Dépendance
+ajoutée : `deap>=1.4,<2.0` (`uv add`).
+
+**Aucun opérateur de réparation nécessaire** : les individus réels de DEAP peuvent muter librement
+sans jamais produire de configuration invalide, car `module_a.fitness.decode_chromosome` tolère
+déjà n'importe quel flottant (snapping `_nearest`/modulo) — conçu précisément pour ça.
+
+**Discrétisation de la grille résolue** : `plc_level ∈ [0,1]` est continu, mais une recherche par
+grille exhaustive a besoin d'un pas fini que le sujet ne donne pas. Choix : `GRID_PLC_STEPS = 5`
+(`np.linspace(0,1,5)`), documenté comme plausible et non mesuré, même esprit que les profils
+utilisateurs de Module D. Combiné aux 5 débits x 4 tailles de trame x 3 codecs déjà fixés par les
+gènes discrets du chromosome, la grille complète fait `5*4*5*3 = 300` évaluations.
+
+**Reproductibilité DEAP résolue** : les opérateurs `tools.sel*`/`mut*`/`cx*` de DEAP tirent du
+module `random` standard de Python, pas de `numpy` — `deap_ga_codec` seed donc via `random.
+seed(seed)`, pas `np.random.seed()`. Le `seed` est aussi transmis à `codec_fitness` lui-même via
+`codec_fitness_kwargs`, pour que chaque individu s'évalue de façon déterministe quel que soit le
+point de l'espace des chromosomes que DEAP visite.
+
+**SBX η=20 réutilisé pour Pb1** : le sujet n'impose pas cet opérateur précis pour l'AG DEAP de Pb1
+(seulement « AG via DEAP »), mais reprendre le même η que `ag_scratch.py` garde une cohérence
+méthodologique entre les deux AG du projet — choix délibéré, pas une exigence du sujet.
+
+**Enregistrement `creator` de DEAP — état global du process** : `creator.create(...)` (DEAP) définit
+des classes au niveau du module `deap.creator`, partagées par tout le process Python — un second
+appel avec le même nom lève un avertissement. Gardé par `hasattr(creator, ...)` pour rester
+idempotent si le fichier est réimporté (collecte de tests, notebook). Un test recharge le module
+(`importlib.reload`) pour vérifier explicitement cette idempotence.
+
+**Tests** : historique du meilleur non-décroissant (maximisation) pour l'AG DEAP ; le meilleur
+chromosome retrouvé recalcule exactement le même `codec_fitness` ; `n_evaluations` exact
+(`pop_size * n_generations`) ; reproductibilité à seed fixe ; recherche aléatoire — `n_evaluations`
+exact et historique non-décroissant ; recherche par grille — nombre d'évaluations exact et meilleur
+chromosome bien un point de la grille ; idempotence du enregistrement `creator`.
+
+**Résultats de test** : 42 tests au total pour Module F (9 nouveaux), tous verts, 100 % de
+couverture sur `pb1_codec.py`. Suite complète du dépôt (380 tests) toujours verte, 97 % de
+couverture globale.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

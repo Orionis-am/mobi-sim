@@ -23,7 +23,8 @@ from matplotlib.figure import Figure
 from module_a import visualize as a_visualize
 from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
-from module_f import ag_scratch, benchmark, visualize
+from module_a.fitness import codec_fitness
+from module_f import ag_scratch, benchmark, pb1_codec, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -290,3 +291,66 @@ class TestHyperparameterSweep:
         )
         assert grid.shape == (2, 2, 2)
         assert np.all(np.isfinite(grid))
+
+
+# --- pb1_codec ---------------------------------------------------------------
+
+_CODEC_KWARGS = {"seed": 0}  # keep codec_fitness deterministic and cheap across pb1_codec's tests
+
+
+class TestDeapGaCodec:
+    def test_history_is_non_decreasing(self):
+        result = pb1_codec.deap_ga_codec(pop_size=6, n_generations=4, seed=0)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+    def test_best_fitness_matches_recomputed_chromosome(self):
+        result = pb1_codec.deap_ga_codec(pop_size=6, n_generations=4, seed=0)
+        recomputed = codec_fitness(result.best_chromosome, seed=0)
+        assert result.best_fitness == pytest.approx(recomputed)
+
+    def test_n_evaluations_matches_formula(self):
+        result = pb1_codec.deap_ga_codec(pop_size=6, n_generations=4, seed=0)
+        assert result.n_evaluations == 6 * 4
+
+    def test_reproducible_with_same_seed(self):
+        r1 = pb1_codec.deap_ga_codec(pop_size=6, n_generations=4, seed=1)
+        r2 = pb1_codec.deap_ga_codec(pop_size=6, n_generations=4, seed=1)
+        assert r1.best_chromosome == r2.best_chromosome
+        assert r1.best_fitness == r2.best_fitness
+
+
+class TestRandomSearchCodec:
+    def test_n_evaluations_matches_request(self):
+        result = pb1_codec.random_search_codec(n_evaluations=5, **_CODEC_KWARGS)
+        assert result.n_evaluations == 5
+        assert len(result.history_best_fitness) == 5
+
+    def test_history_is_non_decreasing(self):
+        result = pb1_codec.random_search_codec(n_evaluations=8, **_CODEC_KWARGS)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+
+class TestCreatorRegistrationIsIdempotent:
+    def test_reload_does_not_raise(self):
+        # pb1_codec registers DEAP's process-global `creator.FitnessMaxCodec`/`IndividualCodec`
+        # once at import time, guarded by hasattr so a second import (e.g. test collection
+        # re-importing, or a notebook re-running the cell) doesn't try to redefine them.
+        import importlib
+
+        importlib.reload(pb1_codec)
+        assert hasattr(pb1_codec.creator, "FitnessMaxCodec")
+
+
+class TestGridSearchCodec:
+    def test_evaluation_count_matches_grid_size(self):
+        result = pb1_codec.grid_search_codec(plc_steps=2, **_CODEC_KWARGS)
+        assert result.n_evaluations == 5 * 4 * 2 * 3
+
+    def test_best_chromosome_is_a_grid_point(self):
+        result = pb1_codec.grid_search_codec(plc_steps=2, **_CODEC_KWARGS)
+        assert result.best_chromosome[0] in [float(b) for b in pb1_codec.BITRATE_CHOICES_KBPS]
+        assert result.best_chromosome[1] in [float(f) for f in pb1_codec.FRAME_SIZE_CHOICES_MS]
+        assert result.best_chromosome[2] in [0.0, 1.0]
+        assert result.best_chromosome[3] in [0.0, 1.0, 2.0]
