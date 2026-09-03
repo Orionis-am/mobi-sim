@@ -14,10 +14,16 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless: these tests must never pop up a GUI window
 
+import folium
 import numpy as np
+import pandas as pd
 import pytest
+from matplotlib.figure import Figure
 
-from module_f import ag_scratch
+from module_a import visualize as a_visualize
+from module_c import map_viz as c_map_viz
+from module_c.terrain_sim import Terrain
+from module_f import ag_scratch, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -127,3 +133,71 @@ class TestRunGa:
 def _rastrigin(x: np.ndarray) -> float:
     a = 10.0
     return float(a * len(x) + np.sum(x**2 - a * np.cos(2 * np.pi * x)))
+
+
+# --- visualize -------------------------------------------------------------
+
+
+def _markers(m: folium.Map) -> list:
+    return [c for c in m._children.values() if isinstance(c, folium.Marker)]
+
+
+def _placement_terrain() -> Terrain:
+    # 4 real BTS at the corners of a 10km square, centered on lon0=0, lat0=0.
+    df = pd.DataFrame({"x": [0.0, 10_000.0, 0.0, 10_000.0], "y": [0.0, 0.0, 10_000.0, 10_000.0]})
+    return Terrain(bts=df, lon0=0.0, lat0=0.0)
+
+
+class TestSaveFigureReuse:
+    def test_is_module_a_save_figure(self):
+        assert visualize.save_figure is a_visualize.save_figure
+
+
+class TestSaveMapHtmlReuse:
+    def test_is_module_c_save_map_html(self):
+        assert visualize.save_map_html is c_map_viz.save_map_html
+
+
+class TestPlotConvergence:
+    def test_returns_figure_with_one_line_per_history(self):
+        fig = visualize.plot_convergence({"AG": [5.0, 3.0, 1.0], "random_search": [5.0, 4.5, 4.0]})
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].lines) == 2
+
+
+class TestPlotHyperparamHeatmap:
+    def test_returns_figure_with_expected_ticks(self):
+        grid = np.array([[1.0, 2.0], [3.0, 4.0]])
+        fig = visualize.plot_hyperparam_heatmap(grid, ["a", "b"], ["x", "y"], "row", "col", "title")
+        assert isinstance(fig, Figure)
+        ax = fig.axes[0]
+        assert len(ax.get_xticks()) == 2
+        assert len(ax.get_yticks()) == 2
+
+
+class TestPlotParetoFront2d:
+    def test_returns_figure_with_one_scatter_per_front(self):
+        fronts = {"NSGA-II": np.array([[1.0, 2.0], [1.5, 1.8]]), "MOEA/D": np.array([[1.1, 2.1]])}
+        fig = visualize.plot_pareto_front_2d(fronts, "f1", "f2", "title")
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].collections) == 2
+
+
+class TestPlotHypervolumeCurve:
+    def test_returns_figure_with_one_line_per_algorithm(self):
+        fig = visualize.plot_hypervolume_curve({"NSGA-II": [0.1, 0.2], "MOEA/D": [0.1, 0.15]})
+        assert isinstance(fig, Figure)
+        assert len(fig.axes[0].lines) == 2
+        assert fig.axes[0].get_ylabel() == "Hypervolume"
+
+
+class TestBuildBtsPlacementMap:
+    def test_returns_folium_map(self):
+        m = visualize.build_bts_placement_map(_placement_terrain(), np.array([[5_000.0, 5_000.0]]))
+        assert isinstance(m, folium.Map)
+
+    def test_marker_count_is_existing_plus_new(self):
+        terrain = _placement_terrain()
+        new_positions = np.array([[5_000.0, 5_000.0], [2_000.0, 2_000.0]])
+        m = visualize.build_bts_placement_map(terrain, new_positions)
+        assert len(_markers(m)) == len(terrain.bts) + len(new_positions)

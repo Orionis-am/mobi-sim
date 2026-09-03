@@ -1353,6 +1353,41 @@ dans un commit séparé : `seed=0` fixé, et les termes de pénalité (`capacity
 `min_mos_violation`) ajoutés à la formule manuelle attendue — le test est maintenant déterministe
 et vérifie la formule complète plutôt qu'une version partielle.
 
+### `visualize.py`
+
+**Contexte — déplacé en 2e position dans l'ordre de construction** (le sujet le liste en
+avant-dernier de l'arborescence) : `benchmark.py` (courbes de convergence, heatmap hyperparamètres)
+et `pb2_bts.py` (front de Pareto, courbe d'hypervolume, carte Folium) ont tous les deux besoin de
+tracer leurs résultats dès qu'ils existeront. Construire `visualize.py` en 2e évite d'esquisser du
+code matplotlib ad hoc dans ces fichiers puis de devoir le refactoriser plus tard — voir la note en
+tête de la section Module F ci-dessus pour la justification complète de l'ordre choisi.
+
+**Réutilisation par identité** : `save_figure`/`save_map_html` sont réassignés directement depuis
+`module_a.visualize`/`module_c.map_viz` (`save_figure = a_visualize.save_figure`), exactement comme
+`module_d/correlation.py` l'a fait pour `plot_correlation_matrix` — vérifié par un test d'identité
+(`is`), pas une copie.
+
+**`build_bts_placement_map` est neuve, pas adaptée de `module_c.map_viz.build_position_map`** :
+cette dernière est conçue pour une position estimée + une position réelle optionnelle + des POI, pas
+pour N nouvelles BTS placées à côté de M BTS réelles existantes — la forme des données ne colle pas.
+Convertit les positions (en mètres locaux, sortie de `module_c.fitness.decode_chromosome`) vers
+lon/lat via `module_c.terrain_sim.xy_to_lonlat`, BTS existantes en bleu, nouvelles en rouge.
+
+**Heatmap 3D→2D — ambiguïté résolue** : le sujet demande une heatmap sur 3 hyperparamètres
+(population, croisement, mutation), ce qui ne peut pas tenir dans un seul plan 2D. `plot_hyperparam_
+heatmap` prend un plan 2D déjà tranché ; `benchmark.hyperparameter_sweep` (prochain fichier) renvoie
+le tableau 3D complet, et le code d'analyse en tranche un plan par taille de population — donc trois
+heatmaps au lieu d'une seule. Documenté ici et repris dans la section `benchmark.py`.
+
+**Tests** : réutilisation par identité (`is`) pour les deux fonctions reprises ; chaque fonction de
+tracé retourne bien une `Figure`/`Map` avec le nombre d'artefacts attendu (lignes, scatters, ticks)
+sur une entrée synthétique minimale ; `build_bts_placement_map` compte les marqueurs (`len(existing)
++ len(new)`), suivant le pattern déjà établi par `test_module_c.py::_markers`.
+
+**Résultats de test** : 21 tests au total pour Module F (8 nouveaux), tous verts, 100 % de
+couverture sur `visualize.py`. Suite complète du dépôt (359 tests) toujours verte, 96 % de
+couverture globale — aucune régression dans les modules A–D.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
