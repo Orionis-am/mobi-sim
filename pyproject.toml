@@ -30,6 +30,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7",
     "bcrypt<4.1",  # passlib 1.7.4's bcrypt backend detection breaks on bcrypt>=4.1's removed `__about__`
     "slowapi>=0.1.9",
+    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]
