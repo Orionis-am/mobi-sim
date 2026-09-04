@@ -62,6 +62,14 @@ def create_refresh_token(username: str, scope: str) -> str:
     return _create_token(username, scope, timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES), "refresh")
 
 
+def decode_token(token: str) -> dict | None:
+    """Best-effort decode, returning ``None`` instead of raising — used by `rate_limit.py`'s key func."""
+    try:
+        return jwt.decode(token, _secret_key(), algorithms=[_algorithm()])
+    except JWTError:
+        return None
+
+
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
     if user is None or not verify_password(password, user.hashed_password):
