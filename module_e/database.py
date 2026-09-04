@@ -16,6 +16,7 @@ from pathlib import Path
 
 from sqlalchemy import DateTime, Float, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 DEFAULT_DATABASE_URL = "sqlite:///./module_e.db"
 CATALOG_SEED_PATH = Path(__file__).parent / "catalog_seed.json"
@@ -26,8 +27,13 @@ def _database_url() -> str:
 
 
 def _make_engine(url: str):
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args)
+    if not url.startswith("sqlite"):
+        return create_engine(url)
+    if ":memory:" in url:
+        # A single shared connection across threads — otherwise each thread (the lifespan's vs. a
+        # request's threadpool worker) would get its own throwaway in-memory database.
+        return create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    return create_engine(url, connect_args={"check_same_thread": False})
 
 
 engine = _make_engine(_database_url())
