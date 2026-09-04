@@ -1715,6 +1715,137 @@ plutôt que justifiée par le sujet. Les deux tokens portent un claim `type` (`"
 codé en dur, une factory générique paramétrée par les scopes autorisés, réutilisable pour
 n'importe quelle combinaison de rôles selon la route.
 
+### `rate_limit.py`
+
+**Fichier non prévu par le découpage littéral du sujet, ajouté par nécessité** : le `Limiter`
+SlowAPI doit être un singleton partagé par tous les routeurs (chacun l'importe pour son propre
+décorateur `@limiter.limit(...)`) sans dépendre de `main.py` — sinon import circulaire
+(`main.py` inclut les routeurs, qui importeraient `main.limiter`). Un petit module dédié résout
+ça, même absent de la liste `main.py`/`auth.py`/`routers/`/`models.py`/`database.py`/
+`catalog_seed.json`/`tests/` du sujet.
+
+**Clé du rate limit — token si authentifié, IP sinon** : `docs/SUJET.md` dit « 60 req/min par
+token » sans traiter le cas non-authentifié (`/auth/token`, `/auth/register`, qui n'ont par
+définition pas encore de token). `_rate_limit_key` décode le JWT du header `Authorization` s'il y
+en a un (via `auth.decode_token`, qui avale l'erreur et renvoie `None` plutôt que de lever) et
+retombe sur `get_remote_address` sinon.
+
+### `routers/auth.py`
+
+**`POST /auth/register` — hors sujet littéral, décision utilisateur** : `docs/SUJET.md` ne liste
+que `POST /auth/token`, mais un flux OAuth2 password à scopes admin/operator/user ne peut pas
+fonctionner sans un moyen de créer des comptes. Confirmé explicitement par l'utilisateur avant
+implémentation (voir le plan de session) plutôt que supposé.
+
+### `routers/catalog.py`, `routers/codecs.py`, `routers/sms.py`, `routers/location.py`, `routers/qos.py`, `routers/optimize.py`
+
+**Un fichier par domaine, groupés dans cette même section pour rester scannable** — chacun reste
+une fine couche FastAPI au-dessus d'une fonction déjà existante d'un module A-D/F, sans logique
+métier dupliquée (conforme à « les routeurs de Module E sont de fins wrappers » de ce fichier).
+
+**`codecs.py` — WER proxy par défaut, vrai Whisper en opt-in** : même raisonnement que
+`module_a.fitness.codec_fitness` — un endpoint peut être appelé bien plus souvent qu'un script
+`manual_*_check.py` isolé, donc `use_real_whisper=false` par défaut (`estimate_wer_proxy`, gratuit
+et déterministe), `true` pour la valeur mesurée (coût API réel, cf. CLAUDE.md « ~$0.006/min »).
+
+**`location.py` — un seul terrain par défaut, réutilisé et mis en cache** : `_get_default_terrain`
+est importé directement depuis `module_c.fitness` (nom privé `_`-préfixé mais déjà le précédent
+établi par `module_f/pb2_bts.py`, donc pas une nouvelle convention). Les centroïdes Voronoi
+(Cell-ID) et la grille d'empreintes Wi-Fi sont mis en cache par `id(terrain)` — les recalculer à
+chaque requête serait inutilement coûteux puisqu'ils ne dépendent que du terrain, pas de la
+position vraie interrogée (même raisonnement que la docstring de `voronoi_cell_centroids`
+elle-même). `ip` est la seule méthode sans position vraie ni terrain — un branchement séparé.
+
+**`qos.py` — `GET /qos/session/live` sans sonde STUN réelle par défaut** : une vraie mesure
+`stun.l.google.com:19302` par tick SSE (~1s) serait bien trop lente ; `use_real_stun=true` (opt-in)
+fait une seule mesure réelle (hors event loop, via `run_in_threadpool`) pour amorcer le rtt/jitter
+initial, puis chaque tick suivant dérive via une marche aléatoire seedée — pas de nouvelle sonde
+réseau par tick.
+
+**`optimize.py` — `BackgroundTasks` + table `Job`, pas de file de tâches externe** : les 7
+fonctions `run_*`/`deap_ga_*`/`random_search_*`/`grid_search_*` de Module F sont synchrones et
+CPU-bound ; `POST /optimize/run` insère une ligne `Job` (`status="queued"`), programme l'exécution
+via `BackgroundTasks.add_task`, répond `202` immédiatement avec le `job_id`. Pas de
+Celery/Redis — cohérent avec la contrainte "un seul ordinateur standard" du projet.
+`ALGORITHM_MAP` expose les 4 familles d'algorithmes de Module F (GA/random/grid pour Pb1,
+NSGA-II/MOEA-D pour Pb2, DE/PSO pour Pb3), plus large que la phrase du sujet « AG / NSGA-II », en
+cohérence avec la phrase de REPORT.md elle-même sur Module F ci-dessus.
+
+**`_to_jsonable` — sérialisation récursive dataclass/ndarray** : les 3 types de résultat de
+Module F (`DeapGaResult`, `Pb2Result`, `OptResult`) mélangent champs `list[float]` déjà JSON-safe
+et champs `np.ndarray`/`list[np.ndarray]` qui ne le sont pas (`Pb2Result.F_history`/`final_F`/
+`final_X` notamment) — une fonction récursive générique plutôt que 3 sérialiseurs ad hoc par type
+de résultat.
+
+**Bug rencontré — `SessionLocal` importé par valeur casse l'isolation des tests** : la première
+version de `run_job` faisait `from module_e.database import SessionLocal` et l'utilisait
+directement. Comme les tests isolent chaque test avec un moteur SQLite en mémoire distinct via
+`monkeypatch.setattr(database, "SessionLocal", ...)`, cet import fige la référence *avant* le
+monkeypatch — la tâche de fond continuait de viser l'ancien moteur, donc `db.get(Job, job_id)`
+renvoyait toujours `None` (job introuvable) et le test restait bloqué sur `status="queued"`.
+Corrigé en import du module (`from module_e import database`) et accès dynamique
+`database.SessionLocal()` à chaque appel, pour que le monkeypatch soit bien respecté.
+
+### `main.py`
+
+**`load_dotenv()` avant tout le reste** : contrairement aux modules A-D dont les scripts
+`manual_*_check.py` appellent `load_dotenv()` eux-mêmes, `module_e` est une vraie application
+longue durée (`uvicorn`) — c'est ici, au point d'entrée, que `.env` doit être chargé une fois pour
+que `JWT_SECRET_KEY`/`TWILIO_*`/etc. soient disponibles à tous les routeurs.
+
+**`lifespan` plutôt que `@app.on_event("startup")`** (déprécié) : `init_db()` (création des
+tables + seed du catalogue si vide) tourne une fois au démarrage de l'app.
+
+**Bug rencontré — moteur SQLite en mémoire par thread** : lors du premier test bout-en-bout via
+`TestClient`, l'inscription d'un utilisateur échouait avec `no such table: users` alors que le
+même code fonctionnait en script direct. Cause : `create_engine("sqlite:///:memory:")` sans
+`poolclass` explicite alloue une connexion (donc une base en mémoire) par thread ; le `lifespan`
+(qui appelle `init_db()`) et une requête FastAPI (exécutée via `run_in_threadpool`, un thread
+différent) n'ont donc pas la même base. Corrigé dans `database._make_engine` : les URLs
+`sqlite:///:memory:` utilisent explicitly `poolclass=StaticPool` (une connexion unique et
+partagée entre threads) — schéma standard FastAPI+SQLite pour les tests.
+
+### `tests/` (`conftest.py`, `test_auth.py`, `test_catalog.py`, `test_codecs.py`, `test_sms.py`,
+`test_location.py`, `test_qos.py`, `test_optimize.py`, `test_main.py`, `test_database.py`)
+
+**Sous-dossier `tests/`, pas `test_module_e.py`** : seul module dont le sujet nomme littéralement
+un dossier de tests plutôt qu'un fichier plat — suivi ici plutôt que la convention des modules A-D
+malgré la préférence générale de CLAUDE.md pour la cohérence, puisque le sujet lui-même distingue
+explicitement Module E sur ce point précis.
+
+**Isolation des tests — monkeypatch du moteur, pas `dependency_overrides`** : chaque test obtient
+un moteur SQLite en mémoire (`StaticPool`) frais via une fixture `autouse`
+(`monkeypatch.setattr(database, "engine"/"SessionLocal", ...)`), appliqué *avant* la création du
+`TestClient` pour que le `lifespan` seed la bonne base. Choisi plutôt que
+`app.dependency_overrides[get_db]` seul parce que `routers/optimize.py`'s tâche de fond n'utilise
+pas la dépendance FastAPI `get_db` (elle n'a pas de requête HTTP en cours) — seul un monkeypatch
+au niveau module couvre les deux chemins uniformément (voir le bug ci-dessus).
+
+**Frontières de mock** : `synth_audio.generate_reference_signal` (gTTS/pyttsx3), Whisper réel,
+tout `module_b.twilio_client.*` (Twilio), `ipinfo_client.locate_ip`/`lbs_poi.nearby_pois`
+(réseau réel) — même frontière que les tests des modules eux-mêmes (A/B/C). `cell_id`/`toa`/
+`wifi` en revanche tournent pour de vrai contre le terrain OpenCelliD local (CSV offline, pas de
+clé API, pas de réseau) — cohérent avec la façon dont `module_f/test_module_f.py` teste déjà Pb2
+sans mock.
+
+**Bug rencontré — un test SSE bloque la suite indéfiniment** : la première version de
+`TestSessionLive` ouvrait `GET /qos/session/live` via `client.stream(...)` puis consommait
+`next(response.iter_lines())`. `_live_qos_events` ne s'arrête que quand
+`await request.is_disconnected()` devient vrai, mais le transport ASGI de `starlette.TestClient`
+ne propage pas cette déconnexion de façon fiable une fois le corps de la réponse en cours de
+lecture — le test (et donc toute la commande `pytest`) est resté bloqué plus de 20 minutes sans
+aucune sortie avant d'être tué manuellement. Corrigé en testant `_live_qos_events` directement
+avec une fausse `Request` (`_FakeRequest.is_disconnected()` renvoie `True` après N appels,
+contrôlé par le test) plutôt qu'en rejouant le flux via `TestClient` — déterministe, rapide
+(`LIVE_TICK_SECONDS` monkeypatché à `0.0`), et sans dépendre de la sémantique de déconnexion du
+client de test. `TestSessionLive` ne garde qu'un test synchrone (`requires_auth`, qui échoue avant
+tout streaming).
+
+**Résultats de test** : 60 tests pour Module E, 98 % de couverture (`qos.py` à 85 % — la branche
+`use_real_stun=true`, réseau réel, non exercée par conception ; `auth.py` à 89 % — chemins
+d'erreur de `get_current_user`/`_secret_key` peu atteignables sans un vrai `.env` cassé). Suite
+complète du dépôt : 461 tests, 97 % de couverture globale, tous verts — **Module E est complet**.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).
@@ -1749,6 +1880,18 @@ tests unitaires) : voir la section `compare.py` ci-dessus pour le détail des ar
 générés dans `results/module_f/` (non commité, `results/` est gitignoré). Rien ne reste en attente
 pour Module F côté code/tests/validation réelle ; reste seulement, non bloquant : tableau
 comparatif final et discussion No Free Lunch pour le rapport technique (§8, Module F 4-5 p.),
-animation Folium de l'évolution BTS génération-par-génération (bonus, non requis). Module E non
-commencé — à planifier maintenant que Module F existe, puisque ses endpoints `/optimize/*` doivent
-orchestrer les algorithmes de Module F (AG DEAP, NSGA-II/MOEA-D pymoo, DE scipy, PSO pyswarm).
+animation Folium de l'évolution BTS génération-par-génération (bonus, non requis). Module E est
+complet : les 13 endpoints de `docs/SUJET.md` §3 MOD-E sont implémentés (plus `POST
+/auth/register`, hors sujet littéral — décision utilisateur, voir la section `routers/auth.py`
+ci-dessus), authentification JWT OAuth2 à scopes, catalogue de 20 services en SQLite, rate
+limiting SlowAPI (60 req/min par token), `/optimize/*` orchestrant les 4 familles d'algorithmes de
+Module F via `BackgroundTasks`, Swagger UI sur `/docs`. 60 tests, 98 % de couverture sur module_e ;
+461 tests au total dans le dépôt, 97 % de couverture globale, tous verts. Rien ne reste en attente
+côté code/tests pour Module E ; reste seulement, non bloquant : capture Swagger UI et page dédiée
+(1 p.) pour le rapport technique final (§7, Module E).
+
+**Tous les modules fonctionnels du projet (A, B, C, D, E, F) sont maintenant complets.** Il ne
+reste que le travail de synthèse transversal, non lié à un module spécifique : le rapport
+technique final (`docs/SUJET.md` §7-8 — analyse sim-vs-réel, comparaison des algorithmes
+évolutionnaires, discussion No Free Lunch, réponses aux questions de la grille), et
+`docs/summary.md` à jour pour Module E (fichier local, non commité).
