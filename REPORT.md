@@ -1634,6 +1634,87 @@ couverture globale — **Module F est complet** : les 7 fichiers de `docs/SUJET.
 implémentés et testés (100 % de couverture par fichier, aucun script manuel nécessaire — module
 purement local, aucune API externe).
 
+## Module E — API REST (passerelle FastAPI)
+
+Dernier module fonctionnel du projet : une API REST FastAPI qui expose les modules A-D et
+orchestre Module F, avec authentification JWT, catalogue de services en base SQLite, rate
+limiting et documentation Swagger (`docs/SUJET.md` MOD-E). Construit après Module F, comme
+planifié (`docs/SUJET.md` §5 phase 6) — les endpoints `/optimize/*` orchestrent ses 7 fonctions
+d'algorithmes.
+
+### Dépendances (`pyproject.toml`)
+
+**Ajout** : `fastapi`, `uvicorn`, `sqlalchemy`, `python-jose[cryptography]`, `passlib[bcrypt]`,
+`slowapi`, plus `httpx` en dev (pour `TestClient`/tests d'intégration). Aucune de ces
+bibliothèques n'était présente avant Module E — confirmé par exploration du dépôt.
+
+**Bug rencontré — `passlib` + `bcrypt` récent incompatibles** : `passlib==1.7.4` (dernière
+version, non maintenue depuis 2020) détecte son backend bcrypt en lisant `bcrypt.__about__`, un
+attribut supprimé dans `bcrypt>=4.1`. `uv sync` installe par défaut `bcrypt==5.0.0`, ce qui casse
+`CryptContext(schemes=["bcrypt"]).hash(...)` avec `AttributeError` puis `ValueError` en cascade.
+Corrigé en épinglant `bcrypt<4.1` explicitement (`bcrypt==4.0.1` résolu) — solution standard pour
+cette incompatibilité connue de l'écosystème, en attendant que passlib soit remplacé ou mis à jour
+en amont.
+
+`module_e` est aussi ajouté à `[tool.hatch.build.targets.wheel] packages` aux côtés de
+`module_a`. `pyproject.toml` référençait déjà `module_e` dans `testpaths` et
+`[tool.coverage.run] source` avant même que le module existe — la scaffolding l'anticipait.
+
+### `database.py` + `catalog_seed.json`
+
+**Trois tables, une seule explicite dans le sujet** : le sujet ne détaille textuellement que le
+catalogue de services (`Service` : id, catégorie, protocole, codec, QoS requise, tarif). `User`
+et `Job` sont structurellement impliquées (auth JWT à scopes, endpoint `GET /optimize/{job_id}`
+qui doit bien lire l'état de quelque chose) mais non nommées — ajoutées ici comme des tables à
+part entière plutôt que de contourner le besoin autrement.
+
+**`catalog_seed.json`** : 20 services couvrant les 4 catégories de la taxonomie du cours (Bearer
+Services, Téléservices, Supplementary Services, VAS), avec des valeurs plausibles mais non
+calibrées sur une vraie grille tarifaire opérateur (même esprit documentaire que les constantes
+`MAX_CONGESTION_LOSS_PCT` de `module_d/session_sim.py`) : id explicites 1-20 pour que
+`GET /services/{id}` soit stable, `min_mos=0.0` pour les services sans volet voix (SMS, data
+bearers, VAS non-vocaux) puisque le MOS ne s'y applique pas.
+
+**`MODULE_E_DATABASE_URL`** : override d'environnement (défaut `sqlite:///./module_e.db`) pour
+que les tests utilisent `sqlite:///:memory:` sans toucher au fichier de dev — `module_e/*.db`
+est gitignoré (régénéré au démarrage, jamais commité, même logique que `results/`).
+
+**`seed_services_if_empty`** : idempotent (ne réinsère rien si la table `services` contient déjà
+une ligne), appelé depuis `init_db()` — le lifespan de `main.py` (à venir) l'appellera une fois au
+démarrage de l'app.
+
+**Vérifié à la main** : `init_db()` + requête sur `Service`/`User` en mémoire — 20 lignes
+seedées, hash/vérification de mot de passe fonctionnels après le correctif bcrypt ci-dessus.
+
+### `models.py`
+
+**Pydantic v2, un seul fichier, groupé par routeur** : suit le découpage littéral du sujet
+(`models.py`, pas `schemas.py`) plutôt que d'introduire un fichier par routeur. `ConfigDict(
+from_attributes=True)` sur les modèles `*Out` qui viennent directement d'un ORM
+(`ServiceOut`, `UserOut`).
+
+**`LocationEstimateRequest` — un seul schéma pour 4 méthodes hétérogènes** : `cell_id`/`toa`/
+`wifi` attendent une position vraie (`lat`/`lon`) à convertir en coordonnées locales via le
+`Terrain` par défaut, `ip` attend une adresse IP optionnelle (ou aucune, pour géolocaliser l'IP
+publique de la machine) — un seul modèle avec des champs optionnels plutôt que 4 modèles, le
+routeur validant lui-même la cohérence méthode/champs fournis (voir `routers/location.py`).
+
+### `auth.py`
+
+**Lecture paresseuse de `JWT_SECRET_KEY`/`JWT_ALGORITHM`** : comme `module_b.twilio_client._client()`
+lit `os.environ` au moment de l'appel plutôt qu'à l'import, pour que les tests puissent
+`monkeypatch.setenv` sans dépendre d'un fichier `.env` réel.
+
+**Access (30 min) + refresh (7 jours)** : la durée d'accès est imposée par le sujet ; celle du
+refresh token ne l'est pas — 7 jours choisi comme valeur par défaut raisonnable, documentée ici
+plutôt que justifiée par le sujet. Les deux tokens portent un claim `type` (`"access"`/
+`"refresh"`) pour qu'un refresh token ne puisse pas être utilisé comme token d'accès si présenté
+à `get_current_user`.
+
+**`require_scope(*scopes)` — factory de dépendance** : plutôt qu'un unique `get_current_admin`
+codé en dur, une factory générique paramétrée par les scopes autorisés, réutilisable pour
+n'importe quelle combinaison de rôles selon la route.
+
 ## En attente / pas encore implémenté
 
 Module A est complet (tous les fichiers de `docs/SUJET.md` §3 sont implémentés et testés).

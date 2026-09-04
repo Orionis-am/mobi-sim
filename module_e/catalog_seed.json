@@ -1,0 +1,22 @@
+[
+  {"id": 1, "name": "Voice Call GSM", "category": "teleservice", "protocol": "GSM CS", "codec": "gsm", "min_mos": 3.5, "min_bitrate_kbps": 12.2, "max_delay_ms": 150, "tariff": "postpaid"},
+  {"id": 2, "name": "Voice Call VoLTE", "category": "teleservice", "protocol": "LTE VoLTE/IMS", "codec": "opus", "min_mos": 4.0, "min_bitrate_kbps": 24.0, "max_delay_ms": 100, "tariff": "postpaid"},
+  {"id": 3, "name": "Voice Call VoWiFi", "category": "teleservice", "protocol": "IMS over WiFi", "codec": "aac", "min_mos": 3.8, "min_bitrate_kbps": 24.0, "max_delay_ms": 120, "tariff": "postpaid"},
+  {"id": 4, "name": "SMS", "category": "teleservice", "protocol": "SMPP/SS7 MAP", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.2, "max_delay_ms": 30000, "tariff": "prepaid"},
+  {"id": 5, "name": "MMS", "category": "teleservice", "protocol": "MM1/MM4", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 32.0, "max_delay_ms": 60000, "tariff": "prepaid"},
+  {"id": 6, "name": "Group 3 Fax", "category": "teleservice", "protocol": "T.30 over CS", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 14.4, "max_delay_ms": 500, "tariff": "postpaid"},
+  {"id": 7, "name": "Emergency Call (112)", "category": "teleservice", "protocol": "GSM CS priority", "codec": "gsm", "min_mos": 3.5, "min_bitrate_kbps": 12.2, "max_delay_ms": 100, "tariff": "prepaid"},
+  {"id": 8, "name": "Circuit Data 9.6k", "category": "bearer", "protocol": "GSM CSD", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 9.6, "max_delay_ms": 400, "tariff": "postpaid"},
+  {"id": 9, "name": "GPRS Packet Data", "category": "bearer", "protocol": "GPRS", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 40.0, "max_delay_ms": 600, "tariff": "prepaid"},
+  {"id": 10, "name": "EDGE Packet Data", "category": "bearer", "protocol": "EDGE", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 200.0, "max_delay_ms": 300, "tariff": "prepaid"},
+  {"id": 11, "name": "UMTS Bearer 384k", "category": "bearer", "protocol": "UMTS PS", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 384.0, "max_delay_ms": 150, "tariff": "postpaid"},
+  {"id": 12, "name": "LTE Bearer 100M", "category": "bearer", "protocol": "LTE PS", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 100000.0, "max_delay_ms": 50, "tariff": "postpaid"},
+  {"id": 13, "name": "Call Waiting", "category": "supplementary", "protocol": "SS7 MAP/CAMEL", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.0, "max_delay_ms": 200, "tariff": "postpaid"},
+  {"id": 14, "name": "Call Forwarding Unconditional", "category": "supplementary", "protocol": "SS7 MAP", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.0, "max_delay_ms": 200, "tariff": "postpaid"},
+  {"id": 15, "name": "Calling Line ID Presentation", "category": "supplementary", "protocol": "SS7 MAP", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.0, "max_delay_ms": 200, "tariff": "prepaid"},
+  {"id": 16, "name": "Call Barring", "category": "supplementary", "protocol": "SS7 MAP/CAMEL", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.0, "max_delay_ms": 200, "tariff": "prepaid"},
+  {"id": 17, "name": "Multi-Party Conference Call", "category": "supplementary", "protocol": "GSM CS/IMS", "codec": "opus", "min_mos": 3.5, "min_bitrate_kbps": 24.0, "max_delay_ms": 150, "tariff": "postpaid"},
+  {"id": 18, "name": "Visual Voicemail", "category": "vas", "protocol": "IMAP4/HTTP", "codec": "opus", "min_mos": 3.5, "min_bitrate_kbps": 16.0, "max_delay_ms": 2000, "tariff": "postpaid"},
+  {"id": 19, "name": "Mobile Banking USSD", "category": "vas", "protocol": "USSD", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 0.1, "max_delay_ms": 5000, "tariff": "prepaid"},
+  {"id": 20, "name": "Location-Based Services", "category": "vas", "protocol": "HTTP/REST", "codec": null, "min_mos": 0.0, "min_bitrate_kbps": 8.0, "max_delay_ms": 3000, "tariff": "prepaid"}
+]
