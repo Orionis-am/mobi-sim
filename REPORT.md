@@ -1,8 +1,7 @@
 # MobiSim — Rapport de construction
 
 Journal continu des choix d'architecture, des justifications et des résultats de tests, mis à jour
-au fur et à mesure de l'implémentation. Voir [docs/SUJET.md](docs/SUJET.md) pour le sujet complet
-et [CLAUDE.md](CLAUDE.md) pour le résumé de l'architecture cible. Ce fichier est le compagnon
+au fur et à mesure de l'implémentation. Ce fichier est le compagnon
 « pourquoi » du code : le code reste sans commentaires là où le raisonnement est non-évident ;
 ce raisonnement vit ici à la place.
 
