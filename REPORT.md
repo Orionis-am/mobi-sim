@@ -1890,8 +1890,9 @@ Module F via `BackgroundTasks`, Swagger UI sur `/docs`. 60 tests, 98 % de couver
 côté code/tests pour Module E ; reste seulement, non bloquant : capture Swagger UI et page dédiée
 (1 p.) pour le rapport technique final (§7, Module E).
 
-**Tous les modules fonctionnels du projet (A, B, C, D, E, F) sont maintenant complets.** Il ne
-reste que le travail de synthèse transversal, non lié à un module spécifique : le rapport
-technique final (`docs/SUJET.md` §7-8 — analyse sim-vs-réel, comparaison des algorithmes
-évolutionnaires, discussion No Free Lunch, réponses aux questions de la grille), et
-`docs/summary.md` à jour pour Module E (fichier local, non commité).
+**Tous les modules fonctionnels du projet (A, B, C, D, E, F) sont maintenant complets.**
+`docs/summary.md` (fichier local, non commité) est à jour pour tous les modules, y compris les
+sections Module F et Module E ajoutées après coup. Il ne reste que le travail de synthèse
+transversal, non lié à un module spécifique : le rapport technique final (`docs/SUJET.md` §7-8 —
+analyse sim-vs-réel, comparaison des algorithmes évolutionnaires, discussion No Free Lunch,
+réponses aux questions de la grille).
