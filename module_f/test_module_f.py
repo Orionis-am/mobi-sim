@@ -432,6 +432,41 @@ class TestHypervolumeHistory:
         history = pb2_bts.hypervolume_history(result, ref_point=np.array([2.0, 2.0, 2.0]))
         assert history == [pytest.approx(1.0)]
 
+    def test_default_ref_point_is_run_local_not_comparable_across_runs(self):
+        # Two runs with very different worst-observed corners: each one's *own* default ref_point
+        # (this run's nadir + margin) makes an identical F_history score differently -- the
+        # precise failure shared_reference_point exists to fix (see TestSharedReferencePoint).
+        shared_front = [np.array([[1.0, 1.0, 1.0]])]
+        small_scale = pb2_bts.Pb2Result(F_history=shared_front, final_F=shared_front[0], final_X=np.array([[0]]), n_evaluations=1)
+        large_scale = pb2_bts.Pb2Result(
+            F_history=[np.array([[1.0, 1.0, 1.0]]), np.array([[100.0, 100.0, 100.0]])],
+            final_F=shared_front[0],
+            final_X=np.array([[0]]),
+            n_evaluations=2,
+        )
+        assert pb2_bts.hypervolume_history(small_scale)[0] != pytest.approx(pb2_bts.hypervolume_history(large_scale)[0])
+
+
+class TestSharedReferencePoint:
+    def test_covers_the_worst_point_across_all_runs(self):
+        r1 = pb2_bts.Pb2Result(F_history=[np.array([[1.0, 5.0, 1.0]])], final_F=np.array([[1.0, 5.0, 1.0]]), final_X=np.array([[0]]), n_evaluations=1)
+        r2 = pb2_bts.Pb2Result(F_history=[np.array([[9.0, 1.0, 1.0]])], final_F=np.array([[9.0, 1.0, 1.0]]), final_X=np.array([[0]]), n_evaluations=1)
+        ref = pb2_bts.shared_reference_point([r1, r2])
+        assert ref[0] > 9.0 and ref[1] > 5.0
+
+    def test_makes_identical_fronts_score_identically_across_runs(self):
+        # The scenario TestHypervolumeHistory.test_default_ref_point_is_run_local... shows breaking
+        # under each run's own default ref_point is exactly what a shared one fixes.
+        shared_front = np.array([[1.0, 1.0, 1.0]])
+        small_scale = pb2_bts.Pb2Result(F_history=[shared_front], final_F=shared_front, final_X=np.array([[0]]), n_evaluations=1)
+        large_scale = pb2_bts.Pb2Result(
+            F_history=[shared_front, np.array([[100.0, 100.0, 100.0]])], final_F=shared_front, final_X=np.array([[0]]), n_evaluations=2
+        )
+        ref = pb2_bts.shared_reference_point([small_scale, large_scale])
+        hv_small = pb2_bts.hypervolume_history(small_scale, ref_point=ref)[0]
+        hv_large = pb2_bts.hypervolume_history(large_scale, ref_point=ref)[0]
+        assert hv_small == pytest.approx(hv_large)
+
 
 class TestSelectBestCompromise:
     def test_returns_point_closest_to_ideal(self):

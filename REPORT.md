@@ -1618,7 +1618,10 @@ petites tailles des tests unitaires), produisant de vrais artefacts dans `result
 (non commité, `results/` est gitignoré comme `results/module_c_demo.html`) : courbe de convergence
 Rastrigin 2D (AG/recherche aléatoire/hill climbing), courbe Pb1 (AG DEAP contre recherche
 aléatoire, meilleur `codec_fitness=2.489`), front de Pareto Pb2 N=10 (NSGA-II : 32 points non
-dominés en 1000 évaluations ; MOEA/D : 28 points en 700), courbes d'hypervolume NSGA-II vs MOEA/D,
+dominés en 1000 évaluations ; MOEA/D : 28 points en 700 — chiffres d'un run ad hoc non reproductible,
+superseded par le run avec point de référence partagé documenté plus bas, section « Complément —
+`hypervolume_history` comparait NSGA-II et MOEA/D sur deux points de référence différents »),
+courbes d'hypervolume NSGA-II vs MOEA/D,
 carte Folium du meilleur compromis Pb2 (`pb2_bts_map.html`), et courbe Pb3 DE vs PSO à budget égal
 (1500 évaluations, moyenné sur 5 runs). Confirme que le câblage bout-en-bout entre tous les fichiers
 de Module F fonctionne, pas seulement chaque fichier isolément sous mock/terrain synthétique.
@@ -1690,6 +1693,47 @@ rattrapant le plateau qu'après environ 25 évaluations. Contrairement à Rastri
 un vrai bénéfice de sa pression de sélection — un deuxième point concret pour la discussion No Free
 Lunch (§8) : le même AG peut dominer ou être dominé par une baseline naïve selon la structure du
 problème, pas selon sa sophistication intrinsèque.
+
+### Complément — `hypervolume_history` comparait NSGA-II et MOEA/D sur deux points de référence différents
+
+**Constat, en vérifiant s'il existait un troisième cas du même défaut de comparaison signalé
+ci-dessus** : `results/module_f/pb2_hypervolume.png` n'a pas le bug d'axe X (NSGA-II et MOEA/D
+journalisent tous deux un point d'hypervolume par génération pymoo — l'axe « Génération » est
+honnête pour les deux). Mais en relisant `hypervolume_history` (`pb2_bts.py`), son `ref_point` par
+défaut est calculé à partir du seul `F_history` du run passé en argument (le pire point *de ce
+run*) — deux runs différents (NSGA-II, MOEA/D) obtiennent donc chacun leur propre point de
+référence, sur des échelles différentes. Comparer leurs deux courbes d'hypervolume en valeur
+absolue, comme le fait la figure, n'était donc pas rigoureux : un même front pourrait recevoir un
+score d'hypervolume différent selon le run dont il provient.
+
+**Correctif** : nouvelle fonction `shared_reference_point(results)`, qui calcule un point de
+référence unique couvrant le pire point observé à travers *tous* les runs fournis (même logique de
+marge additive que l'existant, factorisée dans `_nadir_ref_point`). `hypervolume_history` garde sa
+signature et son comportement par défaut inchangés (toujours correct pour tracer la courbe d'un
+seul algorithme isolément) ; comparer deux algorithmes demande maintenant explicitement de calculer
+`shared_reference_point([r1, r2])` puis de le passer à `hypervolume_history(r, ref_point=...)` pour
+chacun.
+
+**Résultat, figure regénérée avec un point de référence partagé** (N=10 nouvelles BTS, terrain
+Aveyron réel, seed=0 — NSGA-II : `pop_size=100, n_generations=25` → 2500 évaluations, front final à
+44 points ; MOEA/D : `n_partitions=12` (91 directions), `n_generations=25` → 2275 évaluations, front
+final à 91 points) : les deux partent d'un hypervolume quasi identique à la génération 0 (~31220,
+attendu — même distribution initiale aléatoire avant que la sélection ne diverge), puis **NSGA-II
+progresse** (31220 → 43718) alors que **MOEA/D régresse fortement** (31220 → 2268) sur ce même
+repère. Résultat gardé tel quel, non retouché ni ré-explication a posteriori : sur ce problème à 3
+objectifs, avec ces hyperparamètres (`n_neighbors=15`, `prob_neighbor_mating=0.7`) et seulement 25
+générations, MOEA/D ne semble pas converger vers une meilleure couverture du front au sens de
+l'hypervolume — à vérifier plutôt qu'affirmer (plus de générations, un maillage de directions plus
+fin, ou d'autres hyperparamètres de voisinage pourraient changer la conclusion). Remplace les
+chiffres informels précédemment notés dans la section `compare.py` ci-dessus (« NSGA-II : 32 points
+non dominés en 1000 évaluations ; MOEA/D : 28 points en 700 ») — issus d'un run ad hoc non
+reproductible avec des paramètres non enregistrés, contrairement à celui-ci.
+
+**Tests** : `TestSharedReferencePoint` (le point de référence couvre bien le pire point à travers
+plusieurs runs ; deux fronts identiques obtiennent le même hypervolume une fois passés au même
+`ref_point` partagé) et un nouveau cas dans `TestHypervolumeHistory` démontrant explicitement la
+régression que `shared_reference_point` corrige (un même front score différemment selon le
+`ref_point` par défaut de son propre run).
 
 ## Module E — API REST (passerelle FastAPI)
 

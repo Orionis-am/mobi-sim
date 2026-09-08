@@ -22,6 +22,7 @@ to [0, 1] across the final front and picks the point closest (Euclidean) to the 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 from pymoo.algorithms.moo.moead import MOEAD
@@ -96,14 +97,33 @@ def run_moead(n_new_bts: int, terrain: Terrain | None = None, n_partitions: int 
     )
 
 
+def _nadir_ref_point(f_stack: np.ndarray, margin_frac: float = 0.1) -> np.ndarray:
+    nadir = f_stack.max(axis=0)
+    margin = np.where(np.abs(nadir) > 0, margin_frac * np.abs(nadir), 1.0)
+    return nadir + margin
+
+
 def hypervolume_history(result: Pb2Result, ref_point: np.ndarray | None = None) -> list[float]:
-    """Hypervolume per generation, using `result.F_history`'s whole-population progress."""
+    """Hypervolume per generation, using `result.F_history`'s whole-population progress.
+
+    Without an explicit `ref_point`, defaults to *this run's own* worst-observed corner -- correct
+    in isolation, but **not** comparable in absolute value against another algorithm's curve
+    computed the same way, since their nadirs (and therefore reference points) differ. To compare
+    e.g. NSGA-II vs. MOEA/D on the same scale, compute one shared reference point via
+    `shared_reference_point` first and pass it to both calls.
+    """
     if ref_point is None:
-        nadir = np.vstack(result.F_history).max(axis=0)
-        margin = np.where(np.abs(nadir) > 0, 0.1 * np.abs(nadir), 1.0)
-        ref_point = nadir + margin
+        ref_point = _nadir_ref_point(np.vstack(result.F_history))
     hv = HV(ref_point=ref_point)
     return [float(hv(gen_F)) for gen_F in result.F_history]
+
+
+def shared_reference_point(results: Sequence[Pb2Result], margin_frac: float = 0.1) -> np.ndarray:
+    """Reference point covering every run's full `F_history` -- pass the result to
+    `hypervolume_history(..., ref_point=...)` for each algorithm being compared, so their
+    hypervolume curves land on the same scale instead of each defaulting to its own run-local
+    nadir (see `hypervolume_history`'s docstring)."""
+    return _nadir_ref_point(np.vstack([np.vstack(r.F_history) for r in results]), margin_frac)
 
 
 def select_best_compromise(result: Pb2Result) -> np.ndarray:
