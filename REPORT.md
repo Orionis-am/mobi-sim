@@ -1672,6 +1672,25 @@ plus sophistiqué ne domine pas systématiquement une baseline simple.
 sans `x_values`), et `x_values` respecté indépendamment par série. Comportement de
 `plot_hypervolume_curve` non affecté (aucun changement de signature côté appelant existant).
 
+**Même bug retrouvé sur `results/module_f/pb1_codec_convergence.png` (Pb1, AG DEAP)** — signalé par
+l'utilisateur juste après le correctif ci-dessus. Cause identique : `pb1_codec.deap_ga_codec`
+journalise un point d'historique par génération (`history_best_fitness`, longueur `n_generations`)
+alors que `random_search_codec` journalise un point par évaluation (longueur `n_evaluations`) ;
+`grid_search_codec` ne journalise même pas d'historique (`history_best_fitness=[]`, seul le meilleur
+individu final est retenu — cohérent avec une recherche exhaustive non incrémentale). Aucun
+changement de code nécessaire (`plot_convergence` accepte déjà `x_values` depuis le correctif
+précédent) — figure regénérée avec `pop_size=50, n_generations=6, seed=0` (reproduit exactement le
+`codec_fitness=2.489` déjà documenté dans la section `compare.py` ci-dessus, confirmant que ce sont
+bien les paramètres d'origine) et un axe « Évaluations de fitness » partagé.
+
+**Résultat, une fois corrigé — à l'inverse du cas Rastrigin ci-dessus** : l'AG (DEAP) est déjà quasi
+optimal dès sa population initiale (`codec_fitness≈2.487` à l'évaluation 0) et reste au-dessus ou à
+l'égal de `random_search` sur tout le budget partagé de 300 évaluations, `random_search` ne
+rattrapant le plateau qu'après environ 25 évaluations. Contrairement à Rastrigin 2D, ici l'AG tire
+un vrai bénéfice de sa pression de sélection — un deuxième point concret pour la discussion No Free
+Lunch (§8) : le même AG peut dominer ou être dominé par une baseline naïve selon la structure du
+problème, pas selon sa sophistication intrinsèque.
+
 ## Module E — API REST (passerelle FastAPI)
 
 Dernier module fonctionnel du projet : une API REST FastAPI qui expose les modules A-D et
