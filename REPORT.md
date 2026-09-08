@@ -1634,6 +1634,44 @@ couverture globale — **Module F est complet** : les 7 fichiers de `docs/SUJET.
 implémentés et testés (100 % de couverture par fichier, aucun script manuel nécessaire — module
 purement local, aucune API externe).
 
+### Complément — `plot_convergence` mélangeait deux unités d'axe X différentes
+
+**Constat (remonté par l'utilisateur en relisant `results/module_f/benchmark_rastrigin_2d.png`)** :
+sur cette figure, la courbe AG s'arrêtait visuellement à x≈24 alors que random_search/hill_climbing
+allaient jusqu'à x=1200 — donnant l'impression que l'AG avait tourné beaucoup moins longtemps que
+les deux autres, alors que `benchmark.run_benchmark_suite` leur donne pourtant le même budget
+d'évaluations (`n_evaluations = pop_size * n_generations`, ici `50 * 24 = 1200`).
+
+**Cause** : `ag_scratch.run_ga` journalise un point d'historique par *génération* (chaque point
+représentant déjà `pop_size` évaluations en interne), alors que `random_search`/`hill_climbing`
+journalisent un point par *évaluation*. `visualize.plot_convergence` traçait `range(len(values))`
+pour chaque série sous un même axe « Génération », sans tenir compte de cette différence
+d'unité — les 24 points de l'AG et les 1200 points des deux autres se retrouvaient donc sur la
+même échelle brute, sous-représentant l'axe X de l'AG d'un facteur `pop_size`.
+
+**Correctif** : `plot_convergence` accepte désormais un paramètre optionnel `x_values` (un mapping
+`label → liste de coordonnées X`), pour placer chaque série sur un axe cohérent — par exemple
+`{"AG": [i * pop_size for i in range(n_generations)], "random_search": range(n_evaluations), ...}`.
+Sans `x_values`, le comportement par défaut (`range(len(values))`) est inchangé — c'est le
+comportement correct pour `plot_hypervolume_curve` (NSGA-II et MOEA/D journalisent tous deux un
+point par génération pymoo, donc les unités coïncident déjà).
+
+**Résultat, une fois la figure regénérée avec un axe « Évaluations de fitness » commun** : sur ce
+budget de 1200 évaluations (2D, `seed=0`), l'AG plafonne à `Rastrigin(x) ≈ 4.5`, alors que
+random_search et hill climbing descendent tous deux sous `2.0` — l'inverse de ce qu'on
+attendrait d'un AG « from scratch » face à des baselines volontairement naïves. Non corrigé
+davantage ici (le graphique corrigé reflète fidèlement les runs, ce n'est pas un bug de mesure) :
+piste plausible, à creuser plutôt qu'affirmer — sur Rastrigin 2D avec seulement 24 générations,
+l'AG n'a peut-être pas assez de générations pour laisser `_adaptive_sigma` terminer sa décroissance
+exploration→exploitation, alors qu'un hill climbing glouton en 2D peut converger vite sur une
+fonction dont les minima locaux restent proches du minimum global à cette dimensionnalité. Bon
+exemple concret pour la discussion No Free Lunch (§8, Module F) : à budget égal, l'algorithme le
+plus sophistiqué ne domine pas systématiquement une baseline simple.
+
+**Tests** : `TestPlotConvergence` gagne 2 cas — axe X par défaut inchangé (`range(len(values))`
+sans `x_values`), et `x_values` respecté indépendamment par série. Comportement de
+`plot_hypervolume_curve` non affecté (aucun changement de signature côté appelant existant).
+
 ## Module E — API REST (passerelle FastAPI)
 
 Dernier module fonctionnel du projet : une API REST FastAPI qui expose les modules A-D et

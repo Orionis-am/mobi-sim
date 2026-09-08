@@ -166,6 +166,23 @@ class TestPlotConvergence:
         assert isinstance(fig, Figure)
         assert len(fig.axes[0].lines) == 2
 
+    def test_default_x_axis_is_raw_point_index(self):
+        # Without x_values, a 3-point history still plots at x=0,1,2 -- the behavior that
+        # historically made benchmark.run_benchmark_suite's GA line (one point per generation)
+        # look like it stopped ~pop_size times earlier than random_search/hill_climbing (one
+        # point per evaluation), despite an equal evaluation budget.
+        fig = visualize.plot_convergence({"AG": [5.0, 3.0, 1.0]})
+        np.testing.assert_array_equal(fig.axes[0].lines[0].get_xdata(), [0, 1, 2])
+
+    def test_x_values_rescales_each_series_independently(self):
+        fig = visualize.plot_convergence(
+            {"AG": [5.0, 3.0, 1.0], "random_search": [5.0, 4.5, 4.0, 3.5]},
+            x_values={"AG": [0, 50, 100], "random_search": [0, 1, 2, 3]},
+        )
+        lines = {line.get_label(): line for line in fig.axes[0].lines}
+        np.testing.assert_array_equal(lines["AG"].get_xdata(), [0, 50, 100])
+        np.testing.assert_array_equal(lines["random_search"].get_xdata(), [0, 1, 2, 3])
+
 
 class TestPlotHyperparamHeatmap:
     def test_returns_figure_with_expected_ticks(self):

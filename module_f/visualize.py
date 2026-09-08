@@ -25,11 +25,29 @@ save_figure = a_visualize.save_figure
 save_map_html = c_map_viz.save_map_html
 
 
-def plot_convergence(histories: dict[str, list[float]], xlabel: str = "Génération", ylabel: str = "Fitness", title: str = "") -> Figure:
-    """One line per algorithm/run label, e.g. `{"AG": [...], "random_search": [...]}`."""
+def plot_convergence(
+    histories: dict[str, list[float]],
+    xlabel: str = "Génération",
+    ylabel: str = "Fitness",
+    title: str = "",
+    x_values: dict[str, list[float]] | None = None,
+) -> Figure:
+    """One line per algorithm/run label, e.g. `{"AG": [...], "random_search": [...]}`.
+
+    Plots `range(len(values))` by default — correct only when every history shares the same
+    per-point unit. That's true for `plot_hypervolume_curve` (NSGA-II/MOEA-D both report one point
+    per pymoo generation) but **not** for `benchmark.run_benchmark_suite`'s three series:
+    `random_search`/`hill_climbing` log one point per fitness evaluation, while `ag_scratch.run_ga`
+    logs one point per generation (each already `pop_size` evaluations) — plotting both against a
+    raw `range(len(values))` index understates the GA's x-axis by a factor of `pop_size` and makes
+    it look like it stopped early despite an equal evaluation budget. Pass `x_values` (one
+    coordinate list per label, e.g. `{"AG": [i * pop_size for i in range(n_generations)], ...}`) to
+    plot every series on a shared, correctly-scaled axis instead.
+    """
     fig, ax = plt.subplots()
     for label, values in histories.items():
-        ax.plot(range(len(values)), values, label=label)
+        xs = x_values[label] if x_values is not None else range(len(values))
+        ax.plot(xs, values, label=label)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
