@@ -25,7 +25,7 @@ from module_c import map_viz as c_map_viz
 from module_c.terrain_sim import Terrain
 from module_a.fitness import codec_fitness
 from module_d.fitness import DEFAULT_TOTAL_CAPACITY_KBPS, qos_fitness_components
-from module_f import ag_scratch, benchmark, compare, pb1_codec, pb2_bts, pb3_qos, visualize
+from module_f import abc_scratch, ag_scratch, benchmark, cmaes_scratch, compare, pb1_codec, pb2_bts, pb3_qos, visualize
 
 # --- ag_scratch ----------------------------------------------------------------
 
@@ -135,6 +135,282 @@ class TestRunGa:
 def _rastrigin(x: np.ndarray) -> float:
     a = 10.0
     return float(a * len(x) + np.sum(x**2 - a * np.cos(2 * np.pi * x)))
+
+
+# --- abc_scratch -----------------------------------------------------------
+
+
+class TestNeighborSearchMove:
+    def test_only_one_dimension_changes(self):
+        rng = np.random.default_rng(0)
+        source_population = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+        bounds = [(-100.0, 100.0)] * 3
+        v = abc_scratch._neighbor_search_move(source_population[0], source_population, 0, bounds, rng)
+        assert (v != source_population[0]).sum() == 1
+
+    def test_result_within_bounds_under_extreme_phi(self):
+        rng = np.random.default_rng(0)
+        source_population = np.array([[0.0, 0.0], [10.0, 10.0]])
+        bounds = [(-1.0, 1.0)] * 2
+        for _ in range(50):
+            v = abc_scratch._neighbor_search_move(source_population[0], source_population, 0, bounds, rng)
+            assert np.all(v >= -1.0) and np.all(v <= 1.0)
+
+    def test_phi_near_zero_returns_near_x_i(self):
+        class _FakeRng:
+            def __init__(self):
+                self._calls = 0
+
+            def integers(self, low, high):
+                self._calls += 1
+                return 0 if self._calls == 1 else 1
+
+            def uniform(self, low, high):
+                return 1e-9
+
+        x_i = np.array([5.0, 5.0])
+        source_population = np.array([[5.0, 5.0], [100.0, 100.0]])
+        bounds = [(-1000.0, 1000.0)] * 2
+        v = abc_scratch._neighbor_search_move(x_i, source_population, 0, bounds, _FakeRng())
+        np.testing.assert_allclose(v, x_i, atol=1e-6)
+
+
+class TestAbcFitnessTransform:
+    def test_hand_computed_values(self):
+        result = abc_scratch._abc_fitness(np.array([0.0, 1.0, -2.0]))
+        np.testing.assert_allclose(result, [1.0, 0.5, 3.0])
+
+    def test_monotonically_decreasing_for_nonnegative_f(self):
+        result = abc_scratch._abc_fitness(np.array([1.0, 2.0]))
+        assert result[0] > result[1]
+
+
+class TestRunAbc:
+    def test_history_length_equals_n_evaluations(self):
+        config = abc_scratch.ABCConfig(n_food_sources=5, n_iterations=4, seed=0)
+        result = abc_scratch.run_abc(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert len(result.history_best_fitness) == result.n_evaluations
+
+    def test_history_is_non_increasing(self):
+        config = abc_scratch.ABCConfig(n_food_sources=5, n_iterations=4, seed=0)
+        result = abc_scratch.run_abc(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        history = result.history_best_fitness
+        assert all(a >= b for a, b in zip(history, history[1:]))
+
+    def test_n_evaluations_lower_bound(self):
+        config = abc_scratch.ABCConfig(n_food_sources=5, n_iterations=4, seed=0)
+        result = abc_scratch.run_abc(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert result.n_evaluations >= config.n_food_sources + config.n_iterations * 2 * config.n_food_sources
+
+    def test_scout_replaces_source_past_limit(self):
+        # A constant fitness landscape: no neighbor-search move can ever strictly improve, so every
+        # employed/onlooker attempt increments `trial` -- with only 2 sources and limit=1, at least
+        # one source is guaranteed to exceed the limit and be scouted within the first iteration
+        # regardless of which sources the (seeded) onlooker roulette happens to pick.
+        config = abc_scratch.ABCConfig(n_food_sources=2, n_iterations=3, limit=1, seed=0)
+        result = abc_scratch.run_abc(lambda x: 0.0, [(-5.0, 5.0)] * 2, config)
+        lower_bound = config.n_food_sources + config.n_iterations * 2 * config.n_food_sources
+        assert result.n_evaluations > lower_bound
+
+    def test_bounds_respected_for_every_evaluated_point(self):
+        seen: list[np.ndarray] = []
+
+        def _tracking_rastrigin(x: np.ndarray) -> float:
+            seen.append(x.copy())
+            return _rastrigin(x)
+
+        bounds = [(-5.12, 5.12)] * 2
+        config = abc_scratch.ABCConfig(n_food_sources=5, n_iterations=5, seed=0)
+        abc_scratch.run_abc(_tracking_rastrigin, bounds, config)
+        for x in seen:
+            assert np.all(x >= -5.12) and np.all(x <= 5.12)
+
+    def test_converges_on_2d_rastrigin(self):
+        config = abc_scratch.ABCConfig(n_food_sources=25, n_iterations=50, seed=0)
+        result = abc_scratch.run_abc(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert result.best_fitness < 5.0
+
+    def test_reproducible_with_same_seed(self):
+        config = abc_scratch.ABCConfig(n_food_sources=10, n_iterations=10, seed=42)
+        bounds = [(-5.12, 5.12)] * 2
+        r1 = abc_scratch.run_abc(_rastrigin, bounds, config)
+        r2 = abc_scratch.run_abc(_rastrigin, bounds, config)
+        assert r1.best_fitness == r2.best_fitness
+        assert np.array_equal(r1.best_x, r2.best_x)
+
+    def test_scout_replacement_can_improve_global_best(self):
+        # n_food_sources=2, limit=0: after the employed-bee phase alone, both sources already have
+        # trial=1 > limit=0 (a constant-bad landscape means neither can ever improve), so both are
+        # guaranteed to be scouted -- deterministically regardless of the onlooker phase's random
+        # picks. Call order is then fixed: 2 init + 2 employed + 2 onlooker = 6 calls before the
+        # first scout evaluation (call 7), which this fitness function makes the best point found.
+        calls = {"n": 0}
+
+        def _fitness_fn(x: np.ndarray) -> float:
+            calls["n"] += 1
+            return -100.0 if calls["n"] == 7 else 100.0
+
+        config = abc_scratch.ABCConfig(n_food_sources=2, n_iterations=1, limit=0, seed=0)
+        result = abc_scratch.run_abc(_fitness_fn, [(-5.0, 5.0)] * 2, config)
+        assert result.best_fitness == -100.0
+
+
+# --- cmaes_scratch -----------------------------------------------------------
+
+
+class TestDefaultPopSize:
+    def test_matches_hansen_formula_for_known_n(self):
+        assert cmaes_scratch._default_pop_size(10) == 10  # 4 + floor(3*ln(10)) = 4 + 6
+
+
+class TestHansenDefaults:
+    def test_weights_sum_to_one(self):
+        hp = cmaes_scratch._hansen_defaults(5, 10)
+        assert hp.weights.sum() == pytest.approx(1.0)
+
+    def test_all_weights_positive(self):
+        hp = cmaes_scratch._hansen_defaults(5, 10)
+        assert np.all(hp.weights > 0)
+
+
+class TestSampleAndClip:
+    def test_unclipped_sample_round_trips_exactly(self):
+        rng = np.random.default_rng(0)
+        mean = np.zeros(2)
+        B, D = np.eye(2), np.ones(2)
+        bounds = [(-100.0, 100.0)] * 2
+        x, y, z = cmaes_scratch._sample_and_clip(mean, 1.0, B, D, bounds, rng)
+        np.testing.assert_allclose(x, mean + 1.0 * (B @ (D * z)))
+        np.testing.assert_allclose(y, B @ (D * z))
+
+    def test_clipped_sample_stays_internally_consistent(self):
+        rng = np.random.default_rng(0)
+        mean = np.zeros(2)
+        B, D = np.eye(2), np.ones(2)
+        bounds = [(-0.01, 0.01)] * 2
+        x, y, z = cmaes_scratch._sample_and_clip(mean, 10.0, B, D, bounds, rng)
+        assert np.all(x >= -0.01) and np.all(x <= 0.01)
+        # the recomputed z/y must reproduce the CLIPPED x exactly -- the safety-critical property
+        np.testing.assert_allclose(mean + 10.0 * (B @ (D * z)), x, atol=1e-12)
+
+    def test_x_always_within_bounds(self):
+        rng = np.random.default_rng(1)
+        mean = np.zeros(3)
+        B, D = np.eye(3), np.ones(3)
+        bounds = [(-0.5, 0.5)] * 3
+        for _ in range(50):
+            x, _, _ = cmaes_scratch._sample_and_clip(mean, 3.0, B, D, bounds, rng)
+            assert np.all(x >= -0.5) and np.all(x <= 0.5)
+
+
+class TestWeightedRecombination:
+    def test_mean_update_stays_within_convex_hull_of_selected_points(self):
+        vectors = [np.array([0.0, 0.0]), np.array([10.0, 0.0]), np.array([0.0, 10.0])]
+        weights = np.array([0.5, 0.3, 0.2])
+        result = cmaes_scratch._weighted_recombine(weights, vectors)
+        stacked = np.array(vectors)
+        assert np.all(result >= stacked.min(axis=0))
+        assert np.all(result <= stacked.max(axis=0))
+
+
+class TestHsigHeuristic:
+    def test_one_when_ps_norm_small(self):
+        assert cmaes_scratch._hsig_indicator(ps_norm=0.0, cs=0.3, gen=1, n=5, chi_n=2.0) == 1.0
+
+    def test_zero_when_ps_norm_large(self):
+        assert cmaes_scratch._hsig_indicator(ps_norm=1000.0, cs=0.3, gen=1, n=5, chi_n=2.0) == 0.0
+
+
+class TestUpdateCovariance:
+    def test_c_stays_symmetric_after_update(self):
+        hp = cmaes_scratch._hansen_defaults(2, 6)
+        C = np.eye(2)
+        pc = np.array([0.1, -0.2])
+        ys = [np.array([0.1, 0.0]), np.array([0.0, 0.1]), np.array([-0.1, 0.1])]
+        order = np.array([0, 1, 2])
+        C_new = cmaes_scratch._update_covariance(C, pc, hp, ys, order, hsig=1.0)
+        np.testing.assert_allclose(C_new, C_new.T)
+
+    def test_c_stays_positive_semi_definite_over_several_generations(self):
+        # Integration-style: replicates run_cma_es's own loop using the public/private helpers
+        # directly, to check the composed update never breaks C's PSD-ness over several real
+        # generations (run_cma_es itself doesn't expose C, so this drives the same functions by hand).
+        n, lam = 3, 8
+        hp = cmaes_scratch._hansen_defaults(n, lam)
+        rng = np.random.default_rng(0)
+        bounds = [(-5.0, 5.0)] * n
+        mean, sigma = np.zeros(n), 0.5
+        C, pc, ps = np.eye(n), np.zeros(n), np.zeros(n)
+        for gen in range(1, 6):
+            eigenvalues, B = np.linalg.eigh((C + C.T) / 2.0)
+            D = np.sqrt(np.clip(eigenvalues, 1e-20, None))
+            ys, zs, fs = [], [], []
+            for _ in range(lam):
+                x, y, z = cmaes_scratch._sample_and_clip(mean, sigma, B, D, bounds, rng)
+                ys.append(y)
+                zs.append(z)
+                fs.append(float(np.sum(x**2)))
+            order = np.argsort(fs)[: hp.mu]
+            y_w = cmaes_scratch._weighted_recombine(hp.weights, [ys[i] for i in order])
+            z_w = cmaes_scratch._weighted_recombine(hp.weights, [zs[i] for i in order])
+            mean = mean + sigma * y_w
+            ps = (1 - hp.cs) * ps + np.sqrt(hp.cs * (2 - hp.cs) * hp.mu_eff) * (B @ z_w)
+            hsig = cmaes_scratch._hsig_indicator(float(np.linalg.norm(ps)), hp.cs, gen, n, hp.chi_n)
+            pc = (1 - hp.cc) * pc + hsig * np.sqrt(hp.cc * (2 - hp.cc) * hp.mu_eff) * y_w
+            C = cmaes_scratch._update_covariance(C, pc, hp, ys, order, hsig)
+            sigma = sigma * float(np.exp((hp.cs / hp.damps) * (np.linalg.norm(ps) / hp.chi_n - 1)))
+            eigvals_after = np.linalg.eigvalsh((C + C.T) / 2.0)
+            assert np.all(eigvals_after >= -1e-8)
+
+
+class TestRunCmaEs:
+    def test_history_length_matches_n_generations(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=12, pop_size=6, seed=0)
+        result = cmaes_scratch.run_cma_es(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert len(result.history_best_fitness) == 12
+
+    def test_history_is_non_increasing(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=20, pop_size=8, seed=0)
+        result = cmaes_scratch.run_cma_es(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        history = result.history_best_fitness
+        assert all(a >= b for a, b in zip(history, history[1:]))
+
+    def test_n_evaluations_matches_formula(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=15, pop_size=10, seed=0)
+        result = cmaes_scratch.run_cma_es(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert result.n_evaluations == 10 * 15
+
+    def test_default_pop_size_used_when_none(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=3, pop_size=None, seed=0)
+        result = cmaes_scratch.run_cma_es(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        expected_lambda = cmaes_scratch._default_pop_size(2)
+        assert result.n_evaluations == expected_lambda * 3
+
+    def test_bounds_respected_for_every_evaluated_point(self):
+        seen: list[np.ndarray] = []
+
+        def _tracking(x: np.ndarray) -> float:
+            seen.append(x.copy())
+            return _rastrigin(x)
+
+        bounds = [(-1.0, 1.0)] * 2
+        config = cmaes_scratch.CMAESConfig(n_generations=10, pop_size=8, initial_sigma=5.0, seed=0)
+        cmaes_scratch.run_cma_es(_tracking, bounds, config)
+        for x in seen:
+            assert np.all(x >= -1.0) and np.all(x <= 1.0)
+
+    def test_converges_on_2d_rastrigin(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=50, pop_size=50, seed=0)
+        result = cmaes_scratch.run_cma_es(_rastrigin, [(-5.12, 5.12)] * 2, config)
+        assert result.best_fitness < 5.0
+
+    def test_reproducible_with_same_seed(self):
+        config = cmaes_scratch.CMAESConfig(n_generations=10, pop_size=8, seed=42)
+        bounds = [(-5.12, 5.12)] * 2
+        r1 = cmaes_scratch.run_cma_es(_rastrigin, bounds, config)
+        r2 = cmaes_scratch.run_cma_es(_rastrigin, bounds, config)
+        assert r1.best_fitness == r2.best_fitness
+        assert np.array_equal(r1.best_x, r2.best_x)
 
 
 # --- visualize -------------------------------------------------------------
@@ -294,6 +570,42 @@ class TestRunBenchmarkSuite:
             assert results[name]["hill_climbing"].n_evaluations == budget
 
 
+class TestRunExtendedBenchmarkSuite:
+    def test_only_requested_algorithms_appear(self):
+        ga_config = ag_scratch.GAConfig(pop_size=5, n_generations=3, seed=0)
+        results = benchmark.run_extended_benchmark_suite(dim=2, seed=0, ga_config=ga_config)
+        assert set(results.keys()) == {"rastrigin", "rosenbrock"}
+        for name in results:
+            assert set(results[name].keys()) == {"ga", "random_search_ga", "hill_climbing_ga"}
+
+    def test_ga_omitted_when_only_abc_requested(self):
+        abc_config = abc_scratch.ABCConfig(n_food_sources=4, n_iterations=2, seed=0)
+        results = benchmark.run_extended_benchmark_suite(dim=2, seed=0, abc_config=abc_config)
+        for name in results:
+            assert set(results[name].keys()) == {"abc", "random_search_abc", "hill_climbing_abc"}
+
+    def test_each_algorithm_gets_baselines_matched_to_its_own_realized_budget(self):
+        ga_config = ag_scratch.GAConfig(pop_size=5, n_generations=3, seed=0)
+        abc_config = abc_scratch.ABCConfig(n_food_sources=4, n_iterations=2, seed=0)
+        cmaes_config = cmaes_scratch.CMAESConfig(n_generations=3, pop_size=6, seed=0)
+        results = benchmark.run_extended_benchmark_suite(dim=2, seed=0, ga_config=ga_config, abc_config=abc_config, cmaes_config=cmaes_config)
+
+        for name in ("rastrigin", "rosenbrock"):
+            assert set(results[name].keys()) == {
+                "ga", "random_search_ga", "hill_climbing_ga",
+                "abc", "random_search_abc", "hill_climbing_abc",
+                "cma_es", "random_search_cma_es", "hill_climbing_cma_es",
+            }
+            for algo_key in ("ga", "abc", "cma_es"):
+                budget = results[name][algo_key].n_evaluations
+                assert results[name][f"random_search_{algo_key}"].n_evaluations == budget
+                assert results[name][f"hill_climbing_{algo_key}"].n_evaluations == budget
+            # GA's/CMA-ES's budgets are closed-form (15, 18) and don't need to coincide; ABC's is
+            # data-dependent (scout phase) and is asserted only against its OWN baselines above.
+            assert results[name]["ga"].n_evaluations == 15
+            assert results[name]["cma_es"].n_evaluations == 18
+
+
 class TestHyperparameterSweep:
     def test_shape_and_finiteness(self):
         grid = benchmark.hyperparameter_sweep(
@@ -372,6 +684,54 @@ class TestGridSearchCodec:
         assert result.best_chromosome[1] in [float(f) for f in pb1_codec.FRAME_SIZE_CHOICES_MS]
         assert result.best_chromosome[2] in [0.0, 1.0]
         assert result.best_chromosome[3] in [0.0, 1.0, 2.0]
+
+
+class TestCmaEsCodec:
+    def test_history_is_non_decreasing(self):
+        result = pb1_codec.cma_es_codec(n_generations=4, pop_size=6, **_CODEC_KWARGS)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+    def test_best_fitness_matches_recomputed_chromosome(self):
+        result = pb1_codec.cma_es_codec(n_generations=4, pop_size=6, **_CODEC_KWARGS)
+        recomputed = codec_fitness(result.best_chromosome, seed=0)
+        assert result.best_fitness == pytest.approx(recomputed)
+
+    def test_n_evaluations_matches_formula(self):
+        result = pb1_codec.cma_es_codec(n_generations=4, pop_size=6, **_CODEC_KWARGS)
+        assert result.n_evaluations == 6 * 4
+
+    def test_reproducible_with_same_seed(self):
+        r1 = pb1_codec.cma_es_codec(n_generations=4, pop_size=6, seed=1)
+        r2 = pb1_codec.cma_es_codec(n_generations=4, pop_size=6, seed=1)
+        assert r1.best_chromosome == r2.best_chromosome
+        assert r1.best_fitness == r2.best_fitness
+
+
+class TestAbcCodec:
+    def test_history_is_non_decreasing(self):
+        result = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, **_CODEC_KWARGS)
+        history = result.history_best_fitness
+        assert all(a <= b for a, b in zip(history, history[1:]))
+
+    def test_history_length_equals_n_evaluations(self):
+        result = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, **_CODEC_KWARGS)
+        assert len(result.history_best_fitness) == result.n_evaluations
+
+    def test_best_fitness_matches_recomputed_chromosome(self):
+        result = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, **_CODEC_KWARGS)
+        recomputed = codec_fitness(result.best_chromosome, seed=0)
+        assert result.best_fitness == pytest.approx(recomputed)
+
+    def test_n_evaluations_lower_bound(self):
+        result = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, **_CODEC_KWARGS)
+        assert result.n_evaluations >= 5 + 4 * 2 * 5
+
+    def test_reproducible_with_same_seed(self):
+        r1 = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, seed=1)
+        r2 = pb1_codec.abc_codec(n_food_sources=5, n_iterations=4, seed=1)
+        assert r1.best_chromosome == r2.best_chromosome
+        assert r1.best_fitness == r2.best_fitness
 
 
 # --- pb2_bts -----------------------------------------------------------------

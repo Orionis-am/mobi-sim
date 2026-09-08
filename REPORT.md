@@ -1735,6 +1735,171 @@ plusieurs runs ; deux fronts identiques obtiennent le même hypervolume une fois
 régression que `shared_reference_point` corrige (un même front score différemment selon le
 `ref_point` par défaut de son propre run).
 
+### Complément — deux algorithmes bonus : ABC et CMA-ES (`docs/SUJET.md`, +5 pts max)
+
+**Contexte** : demande explicite de l'utilisateur, pour démontrer sa compréhension des mécanismes
+évolutionnaires (mutation, sélection, élitisme) au-delà de l'AG déjà construit — deux algorithmes
+délibérément contrastés plutôt qu'un seul :
+- **ABC (Artificial Bee Colony, Karaboga 2005)** — **aucun opérateur de croisement ni de mutation
+  au sens AG** ; son mouvement d'exploration vient d'une perturbation par différence de voisin
+  (abeilles employées/spectatrices), sa diversité/évasion d'abeilles éclaireuses abandonnant les
+  sources de nourriture stagnantes. Choisi comme cas de contraste : que peut faire une
+  métaheuristique à population sans aucun des deux opérateurs GA classiques ?
+- **CMA-ES (Covariance Matrix Adaptation Evolution Strategy, formulation standard de Hansen)** —
+  le choix « pilotée par l'élite » : sa mise à jour de moyenne/covariance à chaque génération est
+  une **recombinaison pondérée des seuls top-μ (élite) individus échantillonnés** — l'élitisme n'est
+  pas une fonctionnalité annexe ici, c'est le mécanisme complet qui pilote à la fois le déplacement
+  et l'adaptation de la distribution de mutation. Explicitement nommé dans la liste bonus du sujet
+  (« +5 pts max... implémentation d'un AE supplémentaire (CMA-ES, SPEA2, MOEA/D) » — MOEA/D déjà
+  implémenté pour le Pb2, CMA-ES restait la cible bonus naturelle).
+
+Les deux sont validés sur Rastrigin/Rosenbrock comme `ag_scratch.py`, puis câblés comme solveurs
+**bonus, non mandatés** pour le Pb1 (config codec) aux côtés de l'AG DEAP/recherche
+aléatoire/grille — contrairement à l'AG `ag_scratch.py` (qui aurait dupliqué le rôle déjà mandaté
+« AG via DEAP » du Pb1), ABC et CMA-ES sont des algorithmes réellement différents et le Pb1 n'a
+aucune restriction « un seul solveur bonus ».
+
+### `abc_scratch.py`
+
+**Convention `n_evaluations`/`history_best_fitness` — par évaluation, pas par itération**, à
+l'inverse de l'AG/CMA-ES (dont le coût par génération est une constante connue à l'avance) : la
+phase d'abeilles éclaireuses coûte un nombre *variable* d'évaluations par itération (dépendant des
+données — combien de compteurs `trial` dépassent `limit` cette itération-là), impossible à
+prédire à l'avance. Journaliser un point d'historique après *chaque* évaluation individuelle évite
+complètement ce problème : `len(history_best_fitness) == n_evaluations` toujours vrai, directement
+comparable aux historiques par évaluation de `random_search`/`hill_climbing` sans aucun
+rééchelonnage `x_values` — évite de répondre au même bug de mésalignement d'axe déjà corrigé une
+fois dans `visualize.plot_convergence` (cf. plus haut, section Module F).
+
+**`_neighbor_search_move`** : le seul opérateur de mouvement d'ABC — perturbe une seule dimension
+aléatoire de `x_i` vers/depuis une autre source aléatoire, `v[j] = x_i[j] + phi*(x_i[j]-x_k[j])`,
+`phi ~ U(-1,1)`, recadré dans les bornes. Ni une mutation au sens AG (pas de probabilité par gène,
+pas de distribution fixe) ni un croisement (un seul autre individu contribue, et seulement à une
+dimension) — ce mouvement EST la totalité de l'opérateur d'exploration d'ABC.
+
+**Test de remplacement éclaireur, construit pour être déterministe malgré le hasard de la
+roulette** : `test_scout_replaces_source_past_limit` utilise un paysage de fitness constant (aucun
+mouvement voisin ne peut jamais améliorer), `n_food_sources=2, limit=1`. Après la seule phase
+d'abeilles employées, `trial=[1,1]` — pas encore `> limit=1`. La phase spectatrice (2 tirages par
+roulette, uniforme ici puisque les deux fitness sont ex æquo) ajoute 2 échecs supplémentaires,
+répartis soit `2/0` (une source atteint `trial=3`), soit `1/1` (les deux atteignent `trial=2`) —
+dans les deux cas, au moins une source dépasse `limit=1` avant la phase éclaireuse, quel que soit le
+tirage aléatoire réellement effectué : garanti par construction, pas par chance sur le seed.
+
+**Test complémentaire pour la couverture de branche `trial[i] > limit` avec amélioration réelle** :
+`test_scout_replacement_can_improve_global_best` instrumente `fitness_fn` par comptage d'appels
+(`n_food_sources=2, limit=0, n_iterations=1` — après la phase employée seule, `trial=1 > limit=0`
+pour les deux sources, donc les deux sont éclairées de façon déterministe, indépendamment des tirages
+spectateurs) : le 7ᵉ appel (2 init + 2 employée + 2 spectatrice + 1er éclaireur) renvoie une valeur
+excellente, prouvant que le nouveau tirage aléatoire d'une abeille éclaireuse peut bien devenir le
+meilleur individu global.
+
+**Résultats de test** : 13 tests, **100 % de couverture** sur `abc_scratch.py`.
+
+### `cmaes_scratch.py`
+
+**Formules exactes implémentées** (Hansen, « The CMA Evolution Strategy: A Tutorial »,
+arXiv:1604.00772), formulation à poids positifs uniquement (pas de CMA-ES actif) : `mu = lambda //
+2`, `weights_raw[i] = ln((lambda+1)/2) - ln(i+1)` pour `i=0..mu-1` (normalisés à somme 1), `mu_eff =
+1/Σweights²`, `cc`, `cs`, `c1`, `cmu`, `damps` par les formules standard fonctions de `N`
+(dimension) et `lambda` (taille de population) — **jamais exposées comme des hyperparamètres
+réglables** dans `CMAESConfig`, pour ne pas inviter à s'écarter accidentellement « des formules
+standard ».
+
+**Gestion des bornes — décision utilisateur explicitement tranchée avant l'implémentation** :
+CMA-ES est naturellement non contraint (son échantillonnage gaussien peut sortir des bornes). Deux
+options présentées à l'utilisateur : (1) recadrer puis **resynchroniser** les vecteurs internes
+`y`/`z` à partir du point recadré avant toute mise à jour (moyenne/chemins d'évolution/covariance),
+ou (2) recadrer seulement pour l'évaluation de fitness, en gardant l'état interne non recadré.
+Choix retenu : (1), **resynchronisation systématique** (`_sample_and_clip`) — le modèle interne de
+l'algorithme ne doit jamais dériver de ce qui a été réellement évalué, ce qui compte particulièrement
+sur un gène étroit comme `plc_level ∈ [0,1]` du Pb1, où le recadrage sera fréquent. Vérifié par le
+test le plus critique du fichier, `test_clipped_sample_stays_internally_consistent` : sous des
+bornes étroites forçant le recadrage, `mean + sigma*(B@(D*z_recalculé))` reproduit exactement le
+point recadré.
+
+**Arrêt — budget fixe uniquement, pas de critère d'arrêt anticipé** : décision utilisateur
+également tranchée avant implémentation, pour rester cohérent avec la convention de tout le reste
+du Module F (`ag_scratch.run_ga`, DE, PSO) — `n_evaluations = lambda * n_generations` reste exact
+et directement comparable, plutôt que variable comme le budget d'ABC.
+
+**Convention `n_evaluations`/`history_best_fitness` — par génération**, comme `ag_scratch.run_ga` :
+chaque génération évalue exactement `lambda` individus (constante connue), donc `n_evaluations =
+lambda * n_generations` est une formule fermée (contrairement à ABC) ; chaque point d'historique
+coûte donc `lambda` évaluations — un appelant construisant `x_values` pour
+`visualize.plot_convergence` doit utiliser `[i * lambda for i in range(n_generations)]`.
+
+**Mécanismes exposés comme fonctions publiques testables séparément**, même philosophie que
+`ag_scratch.py` (`tournament_selection`/`sbx_crossover`/`gaussian_mutation`) : `_weighted_recombine`
+(l'étape « l'élitisme EST le mécanisme » — seuls les top-μ contribuent jamais, pondérés par rang),
+`_hsig_indicator` (garde-fou heuristique sur le chemin d'évolution `pc`), `_update_covariance`
+(mise à jour rang-un + rang-mu). `CMA-ES` lui-même ne garde aucune mémoire du meilleur individu
+jamais vu dans son propre état (contrairement à son mécanisme de recombinaison, qui, lui, est
+élitiste dans *ce qu'il utilise*) — `run_cma_es` doit donc suivre `best_x`/`best_fitness`
+séparément, exactement comme `deap_ga_codec` maintient un `HallOfFame`.
+
+**Test de robustesse numérique le plus significatif** :
+`test_c_stays_positive_semi_definite_over_several_generations` rejoue plusieurs générations réelles
+via les fonctions privées composées (`_sample_and_clip`, `_weighted_recombine`, `_hsig_indicator`,
+`_update_covariance`) et vérifie que les valeurs propres de `C` restent non négatives —
+`run_cma_es` lui-même n'expose pas `C`, donc ce test pilote directement les fonctions de production
+plutôt qu'une réimplémentation isolée du calcul.
+
+**Résultats de test** : 18 tests, **100 % de couverture** sur `cmaes_scratch.py`.
+
+### Complément — `benchmark.py` : validation d'ABC et CMA-ES (`run_extended_benchmark_suite`)
+
+**Fonction sœur, pas une modification de `run_benchmark_suite`** : le test existant de
+`run_benchmark_suite` et son invariant de budget déjà-connu-avant-de-lancer
+(`pop_size*n_generations`) sont écrits spécifiquement pour la forme à 3 (AG/recherche
+aléatoire/hill climbing). Le budget d'ABC n'est connu qu'*après* son exécution (phase éclaireuse à
+coût variable). `run_extended_benchmark_suite(dim, seed, ga_config, abc_config, cmaes_config)`
+lance chaque algorithme demandé (configs à `None` omis du dictionnaire retourné), puis construit sa
+propre paire de référence `random_search`/`hill_climbing` **calée sur son propre budget réalisé**
+— même esprit « recalculer après coup » que `compare.py::_fixed_budget_pb3` pour DE/PSO — plutôt
+qu'un seul budget global partagé entre tous les algorithmes.
+
+**`hyperparameter_sweep` reste spécifique à l'AG**, inchangé : le triplet d'hyperparamètres du
+sujet (population/croisement/mutation) ne correspond à rien pour ABC (aucune notion de croisement
+ou mutation) ni pour CMA-ES (auto-adapte sa propre distribution de mutation) — mieux vaut le
+documenter ainsi que forcer un balayage qui ne correspond à aucun des deux algorithmes.
+
+**Résultats de test** : 3 nouveaux tests (dont un couvrant explicitement la branche
+« `ga_config` omis » du dictionnaire retourné), 100 % de couverture sur `benchmark.py`.
+
+### Complément — `pb1_codec.py` : ABC et CMA-ES comme solveurs bonus
+
+`cma_es_codec`/`abc_codec` suivent exactement la forme de `random_search_codec` : bornes fixées à
+`CHROMOSOME_BOUNDS`, `seed` transmis à *chaque* appel individuel de `codec_fitness` (pas seulement
+au seed propre de l'optimiseur — oubli qui a déjà causé un vrai bug de reproductibilité corrigé une
+fois dans `module_d`/`pb3_qos.py`, cf. plus haut), négation interne (les deux nouveaux algorithmes
+minimisent par convention, `codec_fitness` est maximisé), retour `DeapGaResult` pour rester
+uniforme avec les trois solveurs existants du Pb1.
+
+**Test qui double comme régression de propagation du seed** :
+`test_best_fitness_matches_recomputed_chromosome` recalcule `codec_fitness(result.best_chromosome,
+seed=seed)` et vérifie qu'il correspond exactement à `result.best_fitness` — si `seed` n'était pas
+transmis à *chaque* évaluation interne, cette réconciliation échouerait très probablement (même
+mécanisme que `TestDeapGaCodec.test_best_fitness_matches_recomputed_chromosome`).
+
+**Résultats de test** : 9 nouveaux tests, 100 % de couverture sur `pb1_codec.py`.
+
+### Complément — `routers/optimize.py` : ajout des clés `cma_es`/`abc` à `ALGORITHM_MAP`
+
+Seul changement nécessaire : deux nouvelles entrées dans `ALGORITHM_MAP["pb1_codec"]`.
+`OptimizeRunRequest.algorithm` est déjà un `str` non contraint (pas de `Literal` à mettre à jour),
+`_to_jsonable` gère déjà `DeapGaResult` de façon générique. 2 nouveaux tests
+(`test_cma_es`/`test_abc`) dans `module_e/tests/test_optimize.py`, suivant exactement le pattern de
+`test_ga`/`test_random`.
+
+**Vérification manuelle bout-en-bout** : les deux algorithmes convergent correctement sur Rastrigin
+2D (ABC : `3.4e-7` en 2525 évaluations ; CMA-ES : `0.349` en 2500 évaluations, seed=0) et sur le
+Pb1 réel (les quatre solveurs — AG/recherche aléatoire/CMA-ES/ABC — convergent tous vers
+`codec_fitness≈2.489` en moins de 300 évaluations à budget comparable, figure générée dans
+`results/module_f/pb1_codec_convergence_bonus_algos.png` avec l'axe X en évaluations correctement
+rééchelonné pour l'AG/CMA-ES). Suite complète du dépôt : **511 tests, 97 % de couverture globale**,
+tous verts, aucune régression.
+
 ## Module E — API REST (passerelle FastAPI)
 
 Dernier module fonctionnel du projet : une API REST FastAPI qui expose les modules A-D et

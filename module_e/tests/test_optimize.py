@@ -31,6 +31,17 @@ class TestPb1Codec:
         body = _run_and_fetch(client, auth_headers, "pb1_codec", "grid", {"plc_steps": 2})
         assert body["status"] == "done"
 
+    def test_cma_es(self, client: TestClient, auth_headers: dict[str, str]) -> None:
+        body = _run_and_fetch(client, auth_headers, "pb1_codec", "cma_es", {"n_generations": 2, "pop_size": 4, "seed": 1})
+        assert body["status"] == "done"
+        assert body["result"]["best_chromosome"] is not None
+        assert body["result"]["n_evaluations"] == 4 * 2
+
+    def test_abc(self, client: TestClient, auth_headers: dict[str, str]) -> None:
+        body = _run_and_fetch(client, auth_headers, "pb1_codec", "abc", {"n_food_sources": 4, "n_iterations": 2, "seed": 1})
+        assert body["status"] == "done"
+        assert body["result"]["best_chromosome"] is not None
+
 
 class TestPb2Bts:
     def test_nsga2(self, client: TestClient, auth_headers: dict[str, str]) -> None:

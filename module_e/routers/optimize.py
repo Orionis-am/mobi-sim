@@ -9,7 +9,8 @@ row — no separate task queue needed, matching the project's single-machine con
 
 Exposes all four algorithm families module_f implements (GA/random/grid for Pb1, NSGA-II/MOEA-D
 for Pb2, DE/PSO for Pb3) rather than just the spec prose's narrower "AG / NSGA-II" phrase — see
-REPORT.md.
+REPORT.md. `cma_es`/`abc` on `pb1_codec` are two more, added as bonus (non-mandated) solvers —
+see `module_f/pb1_codec.py`'s module docstring for scope rationale.
 """
 
 from __future__ import annotations
@@ -34,7 +35,13 @@ from module_f import pb1_codec, pb2_bts, pb3_qos
 router = APIRouter(prefix="/optimize", tags=["optimize"], dependencies=[Depends(get_current_user)])
 
 ALGORITHM_MAP: dict[str, dict[str, Callable[..., Any]]] = {
-    "pb1_codec": {"ga": pb1_codec.deap_ga_codec, "random": pb1_codec.random_search_codec, "grid": pb1_codec.grid_search_codec},
+    "pb1_codec": {
+        "ga": pb1_codec.deap_ga_codec,
+        "random": pb1_codec.random_search_codec,
+        "grid": pb1_codec.grid_search_codec,
+        "cma_es": pb1_codec.cma_es_codec,
+        "abc": pb1_codec.abc_codec,
+    },
     "pb2_bts": {"nsga2": pb2_bts.run_nsga2, "moead": pb2_bts.run_moead},
     "pb3_qos": {"de": pb3_qos.run_de, "pso": pb3_qos.run_pso},
 }

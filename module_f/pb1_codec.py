@@ -16,6 +16,16 @@ in chromosome-space DEAP visits.
 No repair operator is needed for DEAP's real-valued individuals: `module_a.fitness.
 decode_chromosome`'s `_nearest`/modulo snapping already tolerates any float, by design (it exists
 precisely so a GA can mutate genes freely without producing invalid configs).
+
+**`cma_es_codec`/`abc_codec` — bonus, non-mandated solvers, added alongside the three above**:
+unlike `module_f/ag_scratch.py`'s from-scratch GA (deliberately never reused for Pb1, since Pb1
+already mandates "AG via DEAP" and reusing it there would just duplicate that role — see
+`ag_scratch.py`'s own module docstring), CMA-ES (`module_f/cmaes_scratch.py`) and ABC
+(`module_f/abc_scratch.py`) are genuinely different algorithms, and Pb1 has no
+one-extra-solver-only restriction. Both wrappers below follow `random_search_codec`'s exact shape:
+bounds fixed to `CHROMOSOME_BOUNDS`, `seed` forwarded into every single `codec_fitness` call (not
+just the optimizer's own seed), negated internally since both minimize by convention while
+`codec_fitness` is maximized.
 """
 
 from __future__ import annotations
@@ -28,6 +38,8 @@ import numpy as np
 from deap import algorithms, base, creator, tools
 
 from module_a.fitness import BITRATE_CHOICES_KBPS, CODEC_BY_INDEX, FRAME_SIZE_CHOICES_MS, codec_fitness
+from module_f.abc_scratch import ABCConfig, run_abc
+from module_f.cmaes_scratch import CMAESConfig, run_cma_es
 
 CHROMOSOME_BOUNDS = [
     (float(min(BITRATE_CHOICES_KBPS)), float(max(BITRATE_CHOICES_KBPS))),
@@ -130,3 +142,39 @@ def grid_search_codec(plc_steps: int = GRID_PLC_STEPS, **codec_fitness_kwargs) -
             best_chromosome, best_fitness = chromosome, fitness
 
     return DeapGaResult(best_chromosome=best_chromosome, best_fitness=best_fitness, history_best_fitness=[], n_evaluations=n_evaluations)
+
+
+def cma_es_codec(n_generations: int = 100, pop_size: int | None = None, seed: int | None = None, **codec_fitness_kwargs) -> DeapGaResult:
+    """CMA-ES (`cmaes_scratch.run_cma_es`) as a bonus, non-mandated Pb1 solver -- see this module's
+    docstring for scope rationale."""
+
+    def objective(chromosome: np.ndarray) -> float:
+        return -codec_fitness(chromosome, seed=seed, **codec_fitness_kwargs)
+
+    config = CMAESConfig(n_generations=n_generations, pop_size=pop_size, seed=seed)
+    result = run_cma_es(objective, CHROMOSOME_BOUNDS, config)
+    return DeapGaResult(
+        best_chromosome=list(result.best_x),
+        best_fitness=-result.best_fitness,
+        history_best_fitness=[-v for v in result.history_best_fitness],
+        n_evaluations=result.n_evaluations,
+    )
+
+
+def abc_codec(n_food_sources: int = 25, n_iterations: int = 100, limit: int | None = None, seed: int | None = None, **codec_fitness_kwargs) -> DeapGaResult:
+    """Artificial Bee Colony (`abc_scratch.run_abc`) as a bonus, non-mandated Pb1 solver -- see this
+    module's docstring for scope rationale. `history_best_fitness` is already per-evaluation
+    (`abc_scratch.py`'s convention), so `len(history_best_fitness) == n_evaluations` here too,
+    unlike `deap_ga_codec`'s per-generation history."""
+
+    def objective(chromosome: np.ndarray) -> float:
+        return -codec_fitness(chromosome, seed=seed, **codec_fitness_kwargs)
+
+    config = ABCConfig(n_food_sources=n_food_sources, n_iterations=n_iterations, limit=limit, seed=seed)
+    result = run_abc(objective, CHROMOSOME_BOUNDS, config)
+    return DeapGaResult(
+        best_chromosome=list(result.best_x),
+        best_fitness=-result.best_fitness,
+        history_best_fitness=[-v for v in result.history_best_fitness],
+        n_evaluations=result.n_evaluations,
+    )

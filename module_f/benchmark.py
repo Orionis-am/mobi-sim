@@ -21,8 +21,10 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from module_f import ag_scratch
+from module_f import abc_scratch, ag_scratch, cmaes_scratch
+from module_f.abc_scratch import ABCConfig
 from module_f.ag_scratch import GAConfig
+from module_f.cmaes_scratch import CMAESConfig
 
 RASTRIGIN_BOUNDS = (-5.12, 5.12)
 ROSENBROCK_BOUNDS = (-5.0, 10.0)
@@ -101,6 +103,52 @@ def run_benchmark_suite(dim: int, seed: int | None = None, ga_config: GAConfig |
             "random_search": random_search(fn, bounds, n_evaluations, seed=seed),
             "hill_climbing": hill_climbing(fn, bounds, n_evaluations, seed=seed),
         }
+    return results
+
+
+def run_extended_benchmark_suite(
+    dim: int,
+    seed: int | None = None,
+    ga_config: GAConfig | None = None,
+    abc_config: ABCConfig | None = None,
+    cmaes_config: CMAESConfig | None = None,
+) -> dict:
+    """Validate `ag_scratch.run_ga`/`abc_scratch.run_abc`/`cmaes_scratch.run_cma_es` against
+    Rastrigin/Rosenbrock, each against its OWN matched `random_search`/`hill_climbing` baseline pair
+    -- a sibling to `run_benchmark_suite`, not a replacement for it, because ABC's evaluation budget
+    is only known AFTER it finishes (its scout-bee phase costs a data-dependent number of
+    evaluations per iteration, see `abc_scratch.py`'s module docstring), unlike GA's/CMA-ES's, which
+    are known up front from `pop_size * n_generations`. Each requested algorithm's own baselines are
+    therefore matched to that algorithm's own realized `n_evaluations`, read off after running it --
+    the same "back-solve after the fact" spirit `compare.py::_fixed_budget_pb3` already uses for
+    DE/PSO -- rather than all algorithms sharing one single global budget number.
+
+    Only keys for the configs actually passed (non-`None`) appear in the returned dict, e.g. with
+    only `abc_config` set: `{"rastrigin": {"abc":..., "random_search_abc":...,
+    "hill_climbing_abc":...}, "rosenbrock": {...}}`.
+    """
+    results: dict[str, dict[str, object]] = {"rastrigin": {}, "rosenbrock": {}}
+    for name, fn, bound_range in (("rastrigin", rastrigin, RASTRIGIN_BOUNDS), ("rosenbrock", rosenbrock, ROSENBROCK_BOUNDS)):
+        bounds = [bound_range] * dim
+
+        if ga_config is not None:
+            ga_result = ag_scratch.run_ga(fn, bounds, ga_config)
+            results[name]["ga"] = ga_result
+            results[name]["random_search_ga"] = random_search(fn, bounds, ga_result.n_evaluations, seed=seed)
+            results[name]["hill_climbing_ga"] = hill_climbing(fn, bounds, ga_result.n_evaluations, seed=seed)
+
+        if abc_config is not None:
+            abc_result = abc_scratch.run_abc(fn, bounds, abc_config)
+            results[name]["abc"] = abc_result
+            results[name]["random_search_abc"] = random_search(fn, bounds, abc_result.n_evaluations, seed=seed)
+            results[name]["hill_climbing_abc"] = hill_climbing(fn, bounds, abc_result.n_evaluations, seed=seed)
+
+        if cmaes_config is not None:
+            cmaes_result = cmaes_scratch.run_cma_es(fn, bounds, cmaes_config)
+            results[name]["cma_es"] = cmaes_result
+            results[name]["random_search_cma_es"] = random_search(fn, bounds, cmaes_result.n_evaluations, seed=seed)
+            results[name]["hill_climbing_cma_es"] = hill_climbing(fn, bounds, cmaes_result.n_evaluations, seed=seed)
+
     return results
 
 
