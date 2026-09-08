@@ -20,14 +20,14 @@ connexion internet.
 | C | Géolocalisation LBS | OpenCelliD (offline), Nominatim/Overpass, ipinfo.io |
 | D | QoS/QoE (modèle E ITU-T) | `stun.l.google.com:19302` |
 | E | Passerelle API REST | FastAPI, SQLite |
-| F | Algorithmique évolutionnaire | DEAP, pymoo, scipy, pyswarm |
+| F | Algorithmique évolutionnaire | DEAP, pymoo, scipy, pyswarm + ABC/CMA-ES faits maison (§8.8) |
 
 Fil conducteur double, tenu sur les six modules : (1) l'écart entre ce qu'une simulation prédit et
 ce qu'une vraie API/mesure produit ; (2) l'apport et les limites des algorithmes évolutionnaires
 sur des problèmes télécom concrets (Module F).
 
 **État du projet** : les six modules sont complets — code, tests, validation contre au moins une
-vraie API par module quand le module en dépend. **461 tests**, **97 % de couverture globale**
+vraie API par module quand le module en dépend. **511 tests**, **97 % de couverture globale**
 (pytest-cov). Détail par module dans les sections suivantes.
 
 ---
@@ -283,8 +283,9 @@ repli), Swagger UI sur `/docs`.
 *[Figure 5 — capture Swagger UI `/docs`]*
 
 **Tests** : 60 tests, 98 % de couverture sur `module_e` (branches non couvertes par conception :
-`use_real_stun=true`, réseau réel ; chemins d'erreur `.env` cassé). Suite complète du dépôt : **461
-tests, 97 % de couverture globale**.
+`use_real_stun=true`, réseau réel ; chemins d'erreur `.env` cassé). Suite complète du dépôt : **511
+tests, 97 % de couverture globale** (compte final, après les deux algorithmes bonus de Module F —
+§8.8).
 
 ---
 
@@ -296,7 +297,7 @@ AG en Python pur (sélection par tournoi k=3, croisement SBX η=20, mutation gau
 décroissance exponentielle, élitisme 10 %), validé sur Rastrigin/Rosenbrock (2D/10D) contre
 recherche aléatoire et hill climbing, **à budget d'évaluations identique**.
 
-![Convergence Rastrigin 2D](../results/module_f/benchmark_rastrigin_2d.png)
+![Convergence Rastrigin 2D](results/module_f/benchmark_rastrigin_2d.png)
 
 Axe X en évaluations de fitness (budget identique pour les 3 courbes, corrigé le
 2026-09-08 — voir REPORT.md, `plot_convergence` journalisait auparavant l'AG par génération et les
@@ -314,7 +315,7 @@ Contre `module_a.fitness.codec_fitness`, comparé à une recherche aléatoire et
 (300 évaluations). Meilleur individu : `codec_fitness = 2.489`, optimum intérieur ≈ 16–24 kbps
 (§3.2).
 
-![Convergence Pb1](../results/module_f/pb1_codec_convergence.png)
+![Convergence Pb1](results/module_f/pb1_codec_convergence.png)
 
 Axe X également corrigé en évaluations de fitness (même bug d'unité que §8.1, retrouvé ici après
 coup). Ici, contrairement à Rastrigin, l'AG (DEAP) est quasi optimal dès sa population initiale et
@@ -331,8 +332,8 @@ de compromis choisi par distance euclidienne au point idéal normalisé (knee po
 | NSGA-II | 44 points non dominés | 2500 |
 | MOEA/D | 91 points non dominés | 2275 |
 
-![Front de Pareto Pb2, N=10](../results/module_f/pb2_pareto_n10.png)
-![Hypervolume Pb2](../results/module_f/pb2_hypervolume.png)
+![Front de Pareto Pb2, N=10](results/module_f/pb2_pareto_n10.png)
+![Hypervolume Pb2](results/module_f/pb2_hypervolume.png)
 
 Deux problèmes de comparabilité corrigés le 2026-09-08 (détail dans REPORT.md) : le premier (axe X
 générations vs. évaluations, §8.1/§8.2) ne s'appliquait pas ici — NSGA-II et MOEA/D journalisent
@@ -355,13 +356,13 @@ Carte Folium du meilleur compromis : `results/module_f/pb2_bts_map.html`.
 demande cumulée), contre `module_d.fitness.qos_fitness` (scalaire pondéré). Comparaison à budget
 fixé (1500 évaluations, moyenné sur 5 runs).
 
-![DE vs PSO, budget fixé](../results/module_f/pb3_de_vs_pso.png)
+![DE vs PSO, budget fixé](results/module_f/pb3_de_vs_pso.png)
 
 ### 8.5 Tableau comparatif
 
 | Problème | Algorithmes comparés | Axe de comparaison primaire |
 |---|---|---|
-| Pb1 (codec) | AG DEAP / recherche aléatoire / grille exhaustive | évaluations de fitness égales |
+| Pb1 (codec) | AG DEAP / recherche aléatoire / grille exhaustive / CMA-ES / ABC (§8.8) | évaluations de fitness égales |
 | Pb2 (BTS) | NSGA-II / MOEA/D | hypervolume à évaluations égales |
 | Pb3 (QoS) | DE (scipy) / PSO (pyswarm) | fitness à budget d'évaluations fixé |
 
@@ -403,11 +404,68 @@ le MOS moyen résiduel sous la bande restante — un choix plus proche d'un SLA 
 distance euclidienne pure. Le compromis entre ces deux critères, et ce qu'il implique pour un
 opérateur, est un point à trancher à l'oral plutôt qu'ici.
 
+### 8.8 Complément — ABC et CMA-ES, deux algorithmes évolutionnaires bonus
+
+**Motivation** : le sujet propose un bonus (+5 pts max) pour l'implémentation d'un algorithme
+évolutionnaire supplémentaire (CMA-ES, SPEA2 ou MOEA/D — ce dernier déjà couvert par le Pb2, §8.3).
+Au-delà du bonus, l'objectif était de démontrer une compréhension des mécanismes évolutionnaires
+qui ne se limite pas à savoir appeler DEAP/pymoo/scipy sur un problème donné : deux algorithmes
+**délibérément contrastés** ont été ajoutés, chacun implémenté from scratch en Python/NumPy pur
+(même démarche que l'AG from-scratch de §8.1, aucune nouvelle dépendance), pour tester la
+compréhension des opérateurs eux-mêmes plutôt que celle d'une API de librairie :
+
+- **ABC (Artificial Bee Colony, Karaboga 2005)** — **aucun croisement, aucune mutation au sens
+  AG**. Son mouvement d'exploration est une perturbation par différence de voisin sur une seule
+  dimension (abeilles employées/spectatrices), sa diversité vient d'abeilles éclaireuses qui
+  abandonnent purement une source de nourriture stagnante pour un tirage aléatoire frais. Choisi
+  pour vérifier concrètement ce qu'une métaheuristique à population peut accomplir *sans* les deux
+  opérateurs GA classiques.
+- **CMA-ES (Covariance Matrix Adaptation Evolution Strategy, formulation standard de Hansen)** —
+  le choix **piloté par l'élite** : sa mise à jour de moyenne/covariance à chaque génération est une
+  recombinaison pondérée des seuls top-μ individus élites. L'élitisme n'y est pas une garde-fou
+  ajoutée après coup (comme la fraction élite copiée telle quelle en §8.1) mais le mécanisme complet
+  qui pilote à la fois le déplacement de la recherche et l'adaptation de sa propre distribution de
+  mutation (la matrice de covariance elle-même est apprise à partir des individus élites qui ont
+  réussi) — contraste direct avec la décroissance exponentielle de sigma codée en dur en §8.1.
+
+**Décisions de conception tranchées explicitement avant l'implémentation** (détail complet dans
+`REPORT.md`) : CMA-ES est nativement non contraint (échantillonnage gaussien pouvant sortir des
+bornes) — les points recadrés dans les bornes déclenchent une **resynchronisation** des vecteurs
+internes de l'algorithme (`_sample_and_clip`), pour que son modèle interne ne dérive jamais de ce
+qui a réellement été évalué, plutôt qu'un recadrage « pour la forme » qui aurait laissé son état
+interne référencer un point jamais vraiment testé — ce choix compte d'autant plus sur un gène étroit
+comme `plc_level ∈ [0,1]` du Pb1, où le recadrage est fréquent. Arrêt à budget fixe uniquement (pas
+de critère de convergence anticipée), pour rester comparable aux autres algorithmes du Module F.
+
+**Validation Rastrigin 2D** (seed=0, budget ≈2500 évaluations, mêmes conditions que §8.1) :
+
+| Algorithme | Meilleur `Rastrigin(x)` | Évaluations |
+|---|---|---|
+| ABC | 3,4 × 10⁻⁷ | 2525 |
+| CMA-ES | 0,349 | 2500 |
+
+Les deux convergent nettement mieux que l'AG from-scratch sur ce même budget (§8.1, `≈4,5`) — à
+prendre avec prudence : ce n'est pas une preuve de supériorité générale (No Free Lunch, §8.6), plus
+un signe que Rastrigin 2D est un terrain favorable à une recherche guidée par covariance (CMA-ES)
+ou par perturbation locale à échappement (ABC) qu'à la mutation à taux fixe de l'AG maison.
+
+**Câblés comme solveurs bonus du Pb1** (`cma_es_codec`/`abc_codec`, non mandatés — Pb1 n'impose que
+« AG via DEAP », les deux nouveaux algorithmes n'entrent pas en conflit avec cette exigence) :
+
+![Pb1 codec : AG vs random search vs CMA-ES vs ABC](results/module_f/pb1_codec_convergence_bonus_algos.png)
+
+Budget partagé de 300-325 évaluations (`seed=0`) : les quatre convergent vers le même optimum
+(`codec_fitness ≈ 2,489`), l'AG DEAP et CMA-ES quasi optimaux dès les premières évaluations
+(population initiale déjà proche du plateau), ABC partant plus bas mais rattrapant le groupe en
+moins de 25 évaluations. Sur ce problème à 4 gènes, peu dimensionné, les quatre stratégies de
+recherche se valent largement — un résultat cohérent avec le fait que Pb1 est le problème le plus
+simple des trois (comparé à Pb2, 3 objectifs, ou Pb3, 20 gènes mixtes discret/continu).
+
 ---
 
 ## 9. Conclusion et perspectives
 
-Les six modules sont fonctionnellement complets, testés (461 tests, 97 % de couverture) et validés
+Les six modules sont fonctionnellement complets, testés (511 tests, 97 % de couverture) et validés
 contre au moins une vraie API/mesure chaque fois qu'un module en dépend (Twilio, OpenCelliD +
 Nominatim/Overpass + ipinfo.io, STUN, Whisper). Le fil rouge sim-vs-réel s'est vérifié empiriquement
 à trois reprises indépendantes (Module A : Opus WER=1.0 malgré le meilleur SNR/PESQ ; Module B :
@@ -420,9 +478,9 @@ utilisateurs QoS (Module D) et coût BTS proportionnel à la distance à l'infra
 (Module C, faute de données routières) sont des proxys documentés, pas des valeurs mesurées.
 
 **Pistes non explorées** : PESQ complet (licence non disponible pour ce projet), remplacement de la
-géométrie 5G NR pour Module C/D, CMA-ES ou SPEA2 en complément de NSGA-II/MOEA-D, apprentissage par
-renforcement pour l'allocation QoS dynamique (Pb3) en remplacement d'une optimisation statique par
-génération.
+géométrie 5G NR pour Module C/D, SPEA2 ou une variante active de CMA-ES (poids négatifs) en
+complément de NSGA-II/MOEA-D/CMA-ES (§8.8), apprentissage par renforcement pour l'allocation QoS
+dynamique (Pb3) en remplacement d'une optimisation statique par génération.
 
 ---
 
